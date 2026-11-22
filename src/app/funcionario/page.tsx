@@ -133,6 +133,43 @@ export default function FuncionarioMobilePage() {
   const nextActionType = isWorking ? 'OUT' : 'IN';
   const nextActionLabel = isWorking ? 'Marcar Salida' : 'Marcar Entrada';
 
+  const sendAttendanceCoordinates = async (latitude: number, longitude: number, accuracy: number) => {
+    setLocating(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setCanRequestReview(false);
+
+    try {
+      const res = await fetch('/api/attendance/clock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: latitude,
+          lng: longitude,
+          accuracy,
+          type: nextActionType,
+          idempotencyToken: idempotencyKey,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErrorMessage(data.error || 'Error al validar la marcación.');
+        setCanRequestReview(Boolean(data.canRequestReview));
+      } else {
+        setSuccessMessage(data.message);
+        setAttendance(data.attendance);
+        setIdempotencyKey(`idem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+      }
+    } catch {
+      setErrorMessage('Error de conexión con el servidor. Verificá tu red y reintentá.');
+      setCanRequestReview(true);
+    } finally {
+      setLocating(false);
+    }
+  };
+
   const triggerGeolocationCheck = () => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -149,39 +186,9 @@ export default function FuncionarioMobilePage() {
     setLocating(true);
 
     navigator.geolocation.getCurrentPosition(
-      async (pos) => {
+      (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
-
-        try {
-          const res = await fetch('/api/attendance/clock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lat: latitude,
-              lng: longitude,
-              accuracy,
-              type: nextActionType,
-              idempotencyToken: idempotencyKey,
-            }),
-          });
-
-          const data = await res.json();
-
-          if (!res.ok) {
-            setErrorMessage(data.error || 'Error al validar la marcación.');
-            setCanRequestReview(Boolean(data.canRequestReview));
-          } else {
-            setSuccessMessage(data.message);
-            setAttendance(data.attendance);
-            // Generar nuevo token para la siguiente marcación
-            setIdempotencyKey(`idem_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
-          }
-        } catch {
-          setErrorMessage('Error de conexión con el servidor. Verificá tu red y reintentá.');
-          setCanRequestReview(true);
-        } finally {
-          setLocating(false);
-        }
+        sendAttendanceCoordinates(latitude, longitude, accuracy);
       },
       (err) => {
         setLocating(false);
@@ -394,7 +401,7 @@ export default function FuncionarioMobilePage() {
         </div>
       )}
 
-      {/* Botón flotante para solicitar revisión en cualquier momento */}
+      {/* Botón para solicitar revisión */}
       <div className="pt-2 text-center">
         <button
           onClick={() => {
@@ -406,6 +413,49 @@ export default function FuncionarioMobilePage() {
           <HelpCircle className="w-3.5 h-3.5" />
           ¿Tuviste un problema con tu marca? Solicitá una revisión
         </button>
+      </div>
+
+      {/* Simulador de Pruebas de Geocerca (Para Demostración de Aldo Samudio) */}
+      <div className="mt-4 p-3.5 rounded-2xl bg-slate-100/80 border border-slate-200/80 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            Simulador de Pruebas GPS (Modo Demo)
+          </span>
+          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+            Pruebas rápidas
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          Probá cómo reacciona el sistema ante los 3 escenarios reales de geocerca:
+        </p>
+        <div className="grid grid-cols-1 gap-1.5 text-xs">
+          <button
+            type="button"
+            onClick={() => sendAttendanceCoordinates(-25.28675, -57.64705, 15)}
+            className="w-full text-left p-2 rounded-xl bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-800 font-semibold transition flex items-center justify-between"
+          >
+            <span>1. Simular GPS en Sede Central (Dentro de radio, ±15m)</span>
+            <span className="text-[10px] font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-800">Válido</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => sendAttendanceCoordinates(-25.31000, -57.64700, 15)}
+            className="w-full text-left p-2 rounded-xl bg-white border border-rose-200 hover:bg-rose-50 text-rose-800 font-semibold transition flex items-center justify-between"
+          >
+            <span>2. Simular GPS Fuera de Sede (a 2.5 km de distancia)</span>
+            <span className="text-[10px] font-bold bg-rose-100 px-1.5 py-0.5 rounded text-rose-800">Rechazo</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => sendAttendanceCoordinates(-25.28670, -57.64700, 250)}
+            className="w-full text-left p-2 rounded-xl bg-white border border-amber-200 hover:bg-amber-50 text-amber-800 font-semibold transition flex items-center justify-between"
+          >
+            <span>3. Simular Baja Precisión de Señal (±250m)</span>
+            <span className="text-[10px] font-bold bg-amber-100 px-1.5 py-0.5 rounded text-amber-800">Alerta</span>
+          </button>
+        </div>
       </div>
 
       {/* Modal de Solicitud de Revisión */}

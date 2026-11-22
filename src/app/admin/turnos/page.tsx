@@ -195,40 +195,66 @@ export default function ShiftPlanningPage() {
       {/* Barra de Filtros y Rango de Fechas */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          {/* Preset rápido quincena */}
+          {/* Preset rápido semana y quincena */}
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-medium">
+            <button
+              onClick={() => {
+                setStartDate('2026-11-01');
+                setEndDate('2026-11-07');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg transition ${
+                startDate === '2026-11-01' && endDate === '2026-11-07'
+                  ? 'bg-white text-petroleum-900 font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Semana 1
+            </button>
+            <button
+              onClick={() => {
+                setStartDate('2026-11-08');
+                setEndDate('2026-11-14');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg transition ${
+                startDate === '2026-11-08' && endDate === '2026-11-14'
+                  ? 'bg-white text-petroleum-900 font-bold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Semana 2
+            </button>
             <button
               onClick={() => {
                 setStartDate('2026-11-01');
                 setEndDate('2026-11-15');
               }}
-              className={`px-3 py-1.5 rounded-lg transition ${
+              className={`px-2.5 py-1.5 rounded-lg transition ${
                 startDate === '2026-11-01' && endDate === '2026-11-15'
                   ? 'bg-white text-petroleum-900 font-bold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              1ª Quincena (1-15 Nov)
+              1ª Quincena
             </button>
             <button
               onClick={() => {
                 setStartDate('2026-11-16');
                 setEndDate('2026-11-30');
               }}
-              className={`px-3 py-1.5 rounded-lg transition ${
+              className={`px-2.5 py-1.5 rounded-lg transition ${
                 startDate === '2026-11-16' && endDate === '2026-11-30'
                   ? 'bg-white text-petroleum-900 font-bold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              2ª Quincena (16-30 Nov)
+              2ª Quincena
             </button>
             <button
               onClick={() => {
                 setStartDate('2026-11-01');
                 setEndDate('2026-11-30');
               }}
-              className={`px-3 py-1.5 rounded-lg transition ${
+              className={`px-2.5 py-1.5 rounded-lg transition ${
                 startDate === '2026-11-01' && endDate === '2026-11-30'
                   ? 'bg-white text-petroleum-900 font-bold shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -250,6 +276,23 @@ export default function ShiftPlanningPage() {
               {crews.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filtro por Funcionario */}
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-slate-500 font-medium">Funcionario:</span>
+            <select
+              value={selectedUser}
+              onChange={(e) => setSelectedUser(e.target.value)}
+              className="rounded-xl border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-petroleum-600"
+            >
+              <option value="ALL">Todos los funcionarios</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
                 </option>
               ))}
             </select>

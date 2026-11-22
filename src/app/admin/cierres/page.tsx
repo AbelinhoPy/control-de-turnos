@@ -175,6 +175,14 @@ export default function PeriodClosuresPage() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   <a
+                    href={`/api/export/csv?startDate=${closure.startDate}&endDate=${closure.endDate}`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    CSV (Excel)
+                  </a>
+
+                  <a
                     href={`/api/export/excel?type=history&startDate=${closure.startDate}&endDate=${closure.endDate}`}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition"
                   >

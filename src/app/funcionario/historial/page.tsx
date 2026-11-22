@@ -24,28 +24,46 @@ export default function FuncionarioHistorialPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Cargar turnos y asistencias del propio usuario
+    // Cargar turnos y asistencias reales del propio usuario autenticado
     Promise.all([
       fetch('/api/shifts?startDate=2026-11-01&endDate=2026-11-15'),
-      fetch('/api/export/excel?type=history&startDate=2026-11-01&endDate=2026-11-15'),
+      fetch('/api/attendance?startDate=2026-11-01&endDate=2026-11-15'),
     ])
-      .then(async ([shiftsRes]) => {
-        const data = await shiftsRes.json();
-        // Mapear historial propio
-        const list: HistoryItem[] = (data.shifts || []).map((s: { id: string; date: string; shiftCode: string }) => {
+      .then(async ([shiftsRes, attRes]) => {
+        const sData = await shiftsRes.json();
+        const aData = await attRes.json();
+
+        const shiftsList: { id: string; date: string; shiftCode: string }[] = sData.shifts || [];
+        const attList: {
+          id: string;
+          date: string;
+          clockInTime?: string | null;
+          clockOutTime?: string | null;
+          workedDays: number;
+          dayHours: number;
+          nightHours: number;
+          totalHours: number;
+          status: string;
+          notes?: string | null;
+          correctionReason?: string | null;
+        }[] = aData.attendances || [];
+
+        const list: HistoryItem[] = shiftsList.map((s) => {
+          const att = attList.find((a) => a.date === s.date);
           const isLibre = s.shiftCode === 'L';
+
           return {
             id: s.id,
             date: s.date,
             shiftCode: s.shiftCode,
-            clockInTime: isLibre ? null : `${s.date}T06:00:00-03:00`,
-            clockOutTime: isLibre ? null : `${s.date}T14:00:00-03:00`,
-            workedDays: isLibre ? 0 : 1,
-            dayHours: isLibre ? 0 : s.shiftCode === 'T' ? 6 : s.shiftCode === 'N' ? 0 : 8,
-            nightHours: isLibre ? 0 : s.shiftCode === 'T' ? 2 : s.shiftCode === 'N' ? 8 : 0,
-            totalHours: isLibre ? 0 : 8,
-            status: isLibre ? 'LIBRE' : 'COMPLETA',
-            notes: isLibre ? 'Día Libre' : 'Validado en sede',
+            clockInTime: att?.clockInTime || null,
+            clockOutTime: att?.clockOutTime || null,
+            workedDays: att ? Number(att.workedDays) : isLibre ? 0 : 0,
+            dayHours: att ? Number(att.dayHours) : 0,
+            nightHours: att ? Number(att.nightHours) : 0,
+            totalHours: att ? Number(att.totalHours) : 0,
+            status: att?.status || (isLibre ? 'LIBRE' : 'SIN_MARCAR'),
+            notes: att?.notes || att?.correctionReason || (isLibre ? 'Día Libre' : 'Sin registro'),
           };
         });
         setHistory(list);
