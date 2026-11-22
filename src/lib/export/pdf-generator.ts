@@ -1,8 +1,10 @@
 // src/lib/export/pdf-generator.ts
+// Generador de reportes en PDF formato A4 listo para impresión
+
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatTimeAsuncion, APP_TIMEZONE, getDayNameEs } from '../time/timezone';
-import { dataStore } from '../data-store';
+import { formatTimeAsuncion, APP_TIMEZONE, getDayNameEs, formatDateAsuncion } from '../time/timezone';
+import { dbService } from '../db-service';
 
 export async function generateReportPdf(params: {
   orgId: string;
@@ -10,23 +12,31 @@ export async function generateReportPdf(params: {
   startDate: string;
   endDate: string;
   userId?: string;
+  crewId?: string;
+  closureId?: string;
   includeDeactivated?: boolean;
 }): Promise<Buffer> {
-  const org = dataStore.getOrganization(params.orgId);
-  const crews = dataStore.listCrews(params.orgId);
-  const users = dataStore
-    .listUsers(params.orgId, params.includeDeactivated)
-    .filter((u) => u.role !== 'ADMIN');
-  const shifts = dataStore.listShifts(params.orgId, {
+  const org = await dbService.getOrganization(params.orgId);
+  const crews = await dbService.listCrews(params.orgId);
+  let users = await dbService.listUsers(params.orgId, params.includeDeactivated ?? true);
+  users = users.filter((u) => u.role !== 'ADMIN');
+
+  if (params.crewId && params.crewId !== 'ALL') {
+    users = users.filter((u) => u.crewId === params.crewId);
+  }
+  if (params.userId && params.userId !== 'ALL') {
+    users = users.filter((u) => u.id === params.userId);
+  }
+
+  const shifts = await dbService.listShifts(params.orgId, params.startDate, params.endDate, params.crewId);
+  const attendances = await dbService.listAttendances(params.orgId, {
     startDate: params.startDate,
     endDate: params.endDate,
-  });
-  const attendances = dataStore.listAttendances(params.orgId, {
-    startDate: params.startDate,
-    endDate: params.endDate,
+    crewId: params.crewId,
+    userId: params.userId,
   });
 
-  const isLandscape = ['asistencia-diaria', 'historial-individual', 'horas-jornales', 'cobertura'].includes(
+  const isLandscape = ['asistencia-diaria', 'historial-individual', 'horas-jornales', 'cobertura', 'cierre'].includes(
     params.reportType
   );
 
@@ -39,10 +49,9 @@ export async function generateReportPdf(params: {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  // Función para encabezado institucional
+  // Función para encabezado institucional en cada reporte
   const drawHeader = (title: string, subtitle: string) => {
-    // Franja superior azul petróleo
-    doc.setFillColor(15, 79, 95); // #0F4F5F
+    doc.setFillColor(15, 79, 95); // #0F4F5F Azul Petróleo
     doc.rect(0, 0, pageWidth, 18, 'F');
 
     doc.setTextColor(255, 255, 255);
@@ -54,14 +63,13 @@ export async function generateReportPdf(params: {
     doc.setFont('helvetica', 'normal');
     doc.text('Control de Turnos 24/7', pageWidth - 14, 11, { align: 'right' });
 
-    // Título del reporte
     doc.setTextColor(15, 79, 95);
-    doc.setFontSize(14);
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.text(title, 14, 27);
 
     doc.setTextColor(80, 80, 80);
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
     doc.text(subtitle, 14, 33);
 
@@ -72,17 +80,18 @@ export async function generateReportPdf(params: {
     }).format(new Date())} hs`;
     doc.text(emitted, pageWidth - 14, 33, { align: 'right' });
 
-    // Línea separadora
     doc.setDrawColor(200, 220, 225);
     doc.setLineWidth(0.5);
     doc.line(14, 36, pageWidth - 14, 36);
   };
 
-  // Switch de reportes
+  const crewMap = new Map(crews.map((c) => [c.id, c.name]));
+
+  // 1. HORAS Y JORNALES
   if (params.reportType === 'horas-jornales') {
     drawHeader(
       'REPORTE DE HORAS Y JORNALES POR PERÍODO',
-      `Período: ${params.startDate} al ${params.endDate} | Recargo Nocturno: ${org.nightSurchargePercent}% (${org.nightHourStart} a ${org.nightHourEnd})`
+      `Período: ${params.startDate} al ${params.endDate} | Franja Nocturna (+${org.nightSurchargePercent}%): ${org.nightHourStart} a ${org.nightHourEnd}`
     );
 
     const head = [
@@ -95,9 +104,9 @@ export async function generateReportPdf(params: {
         'Horas Diurnas',
         'Horas Noct.',
         'Total Horas',
-        'Jornal Base',
-        'Importe Est.',
-        'Estado Liquidación',
+        'Jornal Base (Gs.)',
+        'Total a Pagar (Gs.)',
+        'Estado',
       ],
     ];
 
@@ -106,11 +115,10 @@ export async function generateReportPdf(params: {
     let grandDayHours = 0;
     let grandNightHours = 0;
     let grandTotalHours = 0;
+    let grandTotalPay = 0;
 
     const body = users.map((u) => {
-      const crew = crews.find((c) => c.id === u.crewId);
       const userAtts = attendances.filter((a) => a.userId === u.id);
-
       let fullDays = 0;
       let halfDays = 0;
       let dayHours = 0;
@@ -126,30 +134,37 @@ export async function generateReportPdf(params: {
         totalHours += Number(a.totalHours);
       });
 
+      const totalDays = fullDays + halfDays * 0.5;
+      const baseWage = u.baseDailyWage || 100000;
+      const hourlyRate = baseWage / 8;
+      const basePay = totalDays * baseWage;
+      const nightPay = nightHours * hourlyRate * (org.nightSurchargePercent / 100);
+      const totalPay = basePay + nightPay;
+
       grandDays += fullDays;
       grandHalfDays += halfDays;
       grandDayHours += dayHours;
       grandNightHours += nightHours;
       grandTotalHours += totalHours;
+      grandTotalPay += totalPay;
 
       return [
         u.name,
-        crew?.name || 'General',
+        u.crewId ? crewMap.get(u.crewId) || 'Volante' : 'Volante',
         fullDays.toString(),
         halfDays.toString(),
-        (fullDays + halfDays * 0.5).toFixed(1),
+        totalDays.toFixed(1),
         dayHours.toFixed(1),
         nightHours.toFixed(1),
         totalHours.toFixed(1),
-        u.baseDailyWage ? `₲ ${u.baseDailyWage.toLocaleString('es-PY')}` : 'No def.',
-        org.halfDayRuleConfirmed ? 'Calculado' : 'Pendiente',
+        baseWage.toLocaleString('es-PY'),
+        org.halfDayRuleConfirmed ? Math.round(totalPay).toLocaleString('es-PY') : 'Pendiente config.',
         org.halfDayRuleConfirmed ? 'Aprobado' : 'Pendiente config.',
       ];
     });
 
-    // Fila totalizadora
     body.push([
-      'TOTALES',
+      'TOTALES GENERALES',
       '',
       grandDays.toString(),
       grandHalfDays.toString(),
@@ -158,7 +173,7 @@ export async function generateReportPdf(params: {
       grandNightHours.toFixed(1),
       grandTotalHours.toFixed(1),
       '-',
-      '-',
+      org.halfDayRuleConfirmed ? Math.round(grandTotalPay).toLocaleString('es-PY') : 'Pendiente',
       '-',
     ]);
 
@@ -167,24 +182,19 @@ export async function generateReportPdf(params: {
       head,
       body,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 250, 252],
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245, 250, 252] },
       margin: { left: 14, right: 14 },
     });
-  } else if (params.reportType === 'asistencia-diaria') {
+  }
+
+  // 2. ASISTENCIA DIARIA
+  else if (params.reportType === 'asistencia-diaria') {
     drawHeader(
       'REPORTE DE ASISTENCIA DIARIA Y CONTROL DE NOVEDADES',
-      `Rango consultado: ${params.startDate} al ${params.endDate}`
+      `Rango consultado: ${params.startDate} al ${params.endDate} | Sede: ${org.workplaceName}`
     );
 
     const head = [
@@ -197,7 +207,8 @@ export async function generateReportPdf(params: {
         'Hora Sal.',
         'Estado',
         'Horas Trab.',
-        'Observaciones / Novedad',
+        'Validación GPS',
+        'Observaciones / Corrección',
       ],
     ];
 
@@ -207,14 +218,13 @@ export async function generateReportPdf(params: {
     filteredShifts.forEach((s) => {
       const u = users.find((usr) => usr.id === s.userId);
       if (!u) return;
-      const crew = crews.find((c) => c.id === u.crewId);
       const att = attendances.find((a) => a.userId === u.id && a.date === s.date);
 
       const inTime = att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--';
       const outTime = att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--';
 
       let statusLabel = 'Ausente';
-      if (s.shiftCode === 'L') statusLabel = 'Día Libre';
+      if (s.shiftCode === 'L') statusLabel = 'Libre';
       else if (att) {
         if (att.status === 'COMPLETA') statusLabel = 'Completa';
         else if (att.status === 'EN_CURSO') statusLabel = 'En curso';
@@ -225,13 +235,14 @@ export async function generateReportPdf(params: {
       body.push([
         s.date,
         u.name,
-        crew?.name || 'General',
+        u.crewId ? crewMap.get(u.crewId) || 'General' : 'General',
         s.shiftCode,
         inTime,
         outTime,
         statusLabel,
         att ? `${Number(att.totalHours).toFixed(1)} hs` : '0 hs',
-        att?.notes || att?.correctionReason || '',
+        att?.clockInStatus === 'VALID' ? 'Dentro radio' : att?.clockInStatus === 'MANUAL' ? 'Manual' : '-',
+        att?.correctionReason || att?.notes || '',
       ]);
     });
 
@@ -240,27 +251,21 @@ export async function generateReportPdf(params: {
       head,
       body,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 250, 252],
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245, 250, 252] },
       margin: { left: 14, right: 14 },
     });
-  } else if (params.reportType === 'historial-individual') {
+  }
+
+  // 3. HISTORIAL INDIVIDUAL
+  else if (params.reportType === 'historial-individual') {
     const selectedUser = users.find((u) => u.id === params.userId) || users[0];
-    const crew = crews.find((c) => c.id === selectedUser?.crewId);
 
     drawHeader(
       `HISTORIAL DE ASISTENCIA - ${selectedUser?.name.toUpperCase()}`,
-      `Equipo: ${crew?.name || 'General'} | Período: ${params.startDate} al ${params.endDate}`
+      `Cuadrilla: ${selectedUser?.crewId ? crewMap.get(selectedUser.crewId) : 'General'} | Período: ${params.startDate} al ${params.endDate}`
     );
 
     const head = [
@@ -330,94 +335,70 @@ export async function generateReportPdf(params: {
       head,
       body,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 250, 252],
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245, 250, 252] },
       margin: { left: 14, right: 14 },
     });
-  } else if (params.reportType === 'cobertura') {
+  }
+
+  // 4. COBERTURA DE TURNOS
+  else if (params.reportType === 'cobertura') {
     drawHeader(
       'REPORTE DE COBERTURA DE TURNOS 24/7',
-      `Período: ${params.startDate} al ${params.endDate} | Meta inicial: 2 funcionarios por turno`
+      `Período: ${params.startDate} al ${params.endDate} | Meta inicial: 2 funcionarios por turno activo`
     );
 
     const head = [
-      [
-        'Fecha',
-        'Día',
-        'Mañana (Prog / Pres)',
-        'Tarde (Prog / Pres)',
-        'Noche (Prog / Pres)',
-        'Total Activos',
-        'Estado Cobertura',
-      ],
+      ['Fecha', 'Día', 'Turno Mañana (06-14)', 'Turno Tarde (14-22)', 'Turno Noche (22-06)', 'Total Activo', 'Estado'],
     ];
 
-    const datesMap = new Map<string, { m: number; t: number; n: number; total: number }>();
-    shifts.forEach((s) => {
-      if (!datesMap.has(s.date)) {
-        datesMap.set(s.date, { m: 0, t: 0, n: 0, total: 0 });
-      }
-      const entry = datesMap.get(s.date)!;
-      if (s.shiftCode === 'M') entry.m++;
-      if (s.shiftCode === 'T') entry.t++;
-      if (s.shiftCode === 'N') entry.n++;
-      if (s.shiftCode !== 'L') entry.total++;
-    });
-
+    const dates = Array.from(new Set(shifts.map((s) => s.date))).sort();
     const body: string[][] = [];
-    Array.from(datesMap.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .forEach(([date, counts]) => {
-        const isComplete = counts.m >= 2 && counts.t >= 2 && counts.n >= 2;
-        body.push([
-          date,
-          getDayNameEs(date),
-          `${counts.m} / 2`,
-          `${counts.t} / 2`,
-          `${counts.n} / 2`,
-          counts.total.toString(),
-          isComplete ? 'Completa 24/7' : 'Déficit de cobertura',
-        ]);
-      });
+
+    dates.forEach((d) => {
+      const dayShifts = shifts.filter((s) => s.date === d);
+      const mCount = dayShifts.filter((s) => s.shiftCode === 'M').length;
+      const tCount = dayShifts.filter((s) => s.shiftCode === 'T').length;
+      const nCount = dayShifts.filter((s) => s.shiftCode === 'N').length;
+      const total = mCount + tCount + nCount;
+      const isFull = mCount >= 2 && tCount >= 2 && nCount >= 2;
+
+      body.push([
+        d,
+        getDayNameEs(d),
+        `${mCount} / 2`,
+        `${tCount} / 2`,
+        `${nCount} / 2`,
+        `${total} pers.`,
+        isFull ? 'Cobertura Completa' : 'Alerta de Cobertura',
+      ]);
+    });
 
     autoTable(doc, {
       startY: 40,
       head,
       body,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 250, 252],
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245, 250, 252] },
       margin: { left: 14, right: 14 },
     });
-  } else if (params.reportType === 'incidencias') {
+  }
+
+  // 5. INCIDENCIAS Y CORRECCIONES
+  else if (params.reportType === 'incidencias') {
     drawHeader(
-      'REPORTE DE INCIDENCIAS, CORRECCIONES MANUALES Y AUDITORÍA',
+      'REPORTE DE INCIDENCIAS, MARCAS MANUALES Y AUDITORÍA',
       `Período: ${params.startDate} al ${params.endDate}`
     );
 
-    const incidents = dataStore.listIncidents(params.orgId);
+    const incidents = await dbService.listAttendanceIncidents(params.orgId);
     const head = [
-      ['Fecha', 'Funcionario', 'Tipo Incidencia', 'Descripción', 'Estado', 'Resolución / Motivo', 'Auditado por'],
+      ['Fecha', 'Funcionario', 'Tipo', 'Descripción / Solicitud', 'Estado', 'Resolución / Motivo', 'Resuelto Por'],
     ];
 
     const body = incidents.map((inc) => [
@@ -426,8 +407,8 @@ export async function generateReportPdf(params: {
       inc.type,
       inc.description,
       inc.status === 'APPROVED' ? 'Aprobada' : inc.status === 'REJECTED' ? 'Rechazada' : 'Pendiente',
-      inc.resolutionNotes || 'En revisión',
-      inc.resolvedByName ? `${inc.resolvedByName} (${inc.resolvedAt?.slice(0, 10)})` : 'Pendiente',
+      inc.resolutionNotes || '-',
+      inc.resolvedByName || '-',
     ]);
 
     autoTable(doc, {
@@ -435,63 +416,114 @@ export async function generateReportPdf(params: {
       head,
       body,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
-      alternateRowStyles: {
-        fillColor: [245, 250, 252],
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
+      alternateRowStyles: { fillColor: [245, 250, 252] },
       margin: { left: 14, right: 14 },
     });
-  } else {
-    // Cierre
+  }
+
+  // 6. CIERRE DE PERÍODO (Consulta por closureId específico y snapshot inmutable)
+  else {
+    const closures = await dbService.listPeriodClosures(params.orgId);
+    const activeClosure = params.closureId
+      ? await dbService.getPeriodClosure(params.closureId)
+      : closures[0]
+      ? await dbService.getPeriodClosure(closures[0].id)
+      : null;
+
     drawHeader(
-      'REPORTE DE CIERRE DE PERÍODO Y LIQUIDACIÓN',
-      `Período: ${params.startDate} al ${params.endDate}`
+      `REPORTE DE CIERRE DE PERÍODO — ${activeClosure?.name.toUpperCase() || 'CIERRE'}`,
+      `Período: ${activeClosure?.startDate || params.startDate} al ${activeClosure?.endDate || params.endDate} | Estado: ${activeClosure?.status || 'BORRADOR'}`
     );
 
-    const closures = dataStore.listPeriodClosures(params.orgId);
-    const activeClosure = closures[0];
+    const summaryData = (activeClosure?.summaryData as any) || {};
 
-    const head = [
-      ['Período', 'Rango', 'Estado', 'Días Totales', 'Horas Diurnas', 'Horas Nocturnas', 'Total Horas', 'Aprobado por'],
+    // Tabla 1: Resumen General y Reglas Inmutables
+    const summaryHead = [
+      ['Parámetro', 'Valor Registrado', 'Parámetro', 'Valor Registrado'],
     ];
 
-    const body = [
+    const summaryBody = [
       [
-        activeClosure?.name || '1ª Quincena Noviembre',
-        `${activeClosure?.startDate} al ${activeClosure?.endDate}`,
+        'Estado del Cierre:',
         activeClosure?.status || 'BORRADOR',
-        activeClosure?.summaryData.totalDaysWorked.toString() || '0',
-        activeClosure?.summaryData.totalDayHours.toString() || '0',
-        activeClosure?.summaryData.totalNightHours.toString() || '0',
-        activeClosure?.summaryData.totalHours.toString() || '0',
+        'Personal Activo:',
+        (summaryData.totalEmployees || 0).toString(),
+      ],
+      [
+        'Rango de Fechas:',
+        `${activeClosure?.startDate} al ${activeClosure?.endDate}`,
+        'Días Totales Computados:',
+        (summaryData.totalDaysWorked || 0).toFixed(1),
+      ],
+      [
+        'Aprobado Por:',
         activeClosure?.approvedByName || 'Pendiente de aprobación',
+        'Total Horas Diurnas:',
+        `${(summaryData.totalDayHours || 0).toFixed(1)} hs`,
+      ],
+      [
+        'Fecha de Aprobación:',
+        activeClosure?.approvedAt ? formatDateAsuncion(activeClosure.approvedAt) : 'Borrador',
+        'Total Horas Nocturnas (+30%):',
+        `${(summaryData.totalNightHours || 0).toFixed(1)} hs`,
+      ],
+      [
+        'Franja Nocturna Aplicada:',
+        `${activeClosure?.nightHourStart} a ${activeClosure?.nightHourEnd} hs`,
+        'Total General de Horas:',
+        `${(summaryData.totalHours || 0).toFixed(1)} hs`,
       ],
     ];
 
     autoTable(doc, {
       startY: 40,
-      head,
-      body,
+      head: summaryHead,
+      body: summaryBody,
       theme: 'grid',
-      headStyles: {
-        fillColor: [15, 79, 95],
-        textColor: 255,
-        fontSize: 8,
-        halign: 'center',
-      },
-      bodyStyles: {
-        fontSize: 8,
-      },
+      showHead: 'everyPage',
+      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
+      bodyStyles: { fontSize: 8 },
       margin: { left: 14, right: 14 },
     });
+
+    // Tabla 2: Detalle por Funcionario
+    const lastY = (doc as any).lastAutoTable?.finalY || 80;
+    doc.setFontSize(11);
+    doc.setTextColor(15, 79, 95);
+    doc.text('Detalle por Funcionario y Liquidación:', 14, lastY + 8);
+
+    const detailHead = [
+      ['Funcionario', 'Cuadrilla', 'Días Trab.', 'Hs Diurnas', 'Hs Nocturnas', 'Total Horas', 'Jornal Base (Gs.)', 'Total Pagado (Gs.)'],
+    ];
+
+    const details = (activeClosure as any)?.detailsSnapshot || [];
+    const detailBody = details.map((d: any) => [
+      d.userName || 'Funcionario',
+      d.crewId || 'General',
+      Number(d.workedDays || 0).toFixed(1),
+      Number(d.dayHours || 0).toFixed(1),
+      Number(d.nightHours || 0).toFixed(1),
+      Number(d.totalHours || 0).toFixed(1),
+      Number(d.baseDailyWage || 100000).toLocaleString('es-PY'),
+      Number(d.totalPay || 0).toLocaleString('es-PY'),
+    ]);
+
+    if (detailBody.length > 0) {
+      autoTable(doc, {
+        startY: lastY + 12,
+        head: detailHead,
+        body: detailBody,
+        theme: 'grid',
+        showHead: 'everyPage',
+        headStyles: { fillColor: [30, 127, 148], textColor: 255, fontSize: 8, halign: 'center' },
+        bodyStyles: { fontSize: 8 },
+        alternateRowStyles: { fillColor: [245, 250, 252] },
+        margin: { left: 14, right: 14 },
+      });
+    }
   }
 
   // Numeración de páginas al pie en todas las páginas
@@ -501,13 +533,12 @@ export async function generateReportPdf(params: {
     doc.setFontSize(8);
     doc.setTextColor(130, 130, 130);
     doc.text(
-      `Página ${i} de ${pageCount} | Control de Turnos 24/7 - Sistema para Aldo Samudio`,
+      `Página ${i} de ${pageCount} | Control de Turnos 24/7 - Sistema de Gestión de Turnos y Jornales`,
       pageWidth / 2,
       pageHeight - 8,
       { align: 'center' }
     );
   }
 
-  const arrayBuffer = doc.output('arraybuffer');
-  return Buffer.from(arrayBuffer);
+  return Buffer.from(doc.output('arraybuffer'));
 }

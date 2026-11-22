@@ -1,7 +1,7 @@
 // src/app/api/attendance/clock/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 import { validateGeofence } from '@/lib/geo/geofence';
 import { formatDateAsuncion, getNowInAsuncion } from '@/lib/time/timezone';
 
@@ -13,21 +13,41 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { lat, lng, accuracy, type, idempotencyToken, manualReason } = body;
+    const { lat, lng, accuracy, type, idempotencyToken } = body;
 
-    if (typeof lat !== 'number' || typeof lng !== 'number') {
+    // 1. Validar tipo de marcación
+    if (type !== 'IN' && type !== 'OUT') {
+      return NextResponse.json(
+        { error: 'Tipo de marcación no válido. Debe ser "IN" (Entrada) o "OUT" (Salida).' },
+        { status: 400 }
+      );
+    }
+
+    // 2. Validar coordenadas
+    if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
       return NextResponse.json(
         { error: 'Las coordenadas GPS son requeridas para registrar la asistencia.' },
         { status: 400 }
       );
     }
 
-    const org = dataStore.getOrganization(session.organizationId);
+    // 3. Validar precisión del GPS sin asumir valores favorables
+    if (accuracy === undefined || accuracy === null || typeof accuracy !== 'number' || isNaN(accuracy)) {
+      return NextResponse.json(
+        {
+          error: 'No se pudo obtener la precisión del GPS desde su dispositivo móvil. Active el modo de alta precisión de ubicación y vuelva a intentar.',
+          canRequestReview: true,
+        },
+        { status: 400 }
+      );
+    }
 
-    // 1. Validar Geofencing y Precisión del GPS en el servidor
+    const org = await dbService.getOrganization(session.organizationId);
+
+    // 4. Validar Geofencing con la precisión informada
     const geoValidation = validateGeofence(
       { latitude: lat, longitude: lng },
-      accuracy || 15,
+      accuracy,
       {
         center: { latitude: org.workplaceLat, longitude: org.workplaceLng },
         radiusMeters: org.geofenceRadiusMeters,
@@ -47,42 +67,45 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Usar HORA DEL SERVIDOR (instante exacto)
+    // 5. Usar hora exacta del servidor en Asunción
     const serverTimestamp = getNowInAsuncion();
     const todayStr = formatDateAsuncion(serverTimestamp);
 
-    // 3. Manejo de Turno Nocturno (cruza medianoche)
-    // Si es una salida ('OUT') en horario de madrugada/mañana (04:00 a 10:00),
-    // buscar si el funcionario tiene una marcación 'EN_CURSO' iniciada ayer a la noche (Turno N).
+    // 6. Procesar Salida ('OUT')
     if (type === 'OUT') {
-      const yesterdayDate = new Date(serverTimestamp.getTime() - 24 * 60 * 60 * 1000);
-      const yesterdayStr = formatDateAsuncion(yesterdayDate);
+      // Buscar primero jornada abierta (incluye turnos nocturnos iniciados ayer o jornadas de hoy)
+      let targetAtt = await dbService.findOpenAttendance(session.userId);
 
-      // Buscar si hay asistencia abierta de ayer
-      const attYesterday = dataStore.getAttendanceByDate(session.userId, yesterdayStr);
-      let targetAtt = attYesterday && attYesterday.status === 'EN_CURSO' ? attYesterday : undefined;
-
-      // Si no hay de ayer, buscar la de hoy
+      // Si no encuentra por estado EN_CURSO, buscar jornada de hoy
       if (!targetAtt) {
-        targetAtt = dataStore.getAttendanceByDate(session.userId, todayStr);
+        targetAtt = await dbService.getAttendanceForUserAndDate(session.userId, todayStr);
       }
 
-      if (!targetAtt || !targetAtt.clockInTime) {
+      if (!targetAtt) {
         return NextResponse.json(
           {
-            error:
-              'No se encontró una marcación de entrada previa activa. Si olvidaste marcar entrada, podés solicitar una revisión administrativa.',
+            error: 'No se encontró una marcación de entrada previa activa para cerrar la jornada. Si olvidó marcar entrada, solicite una revisión administrativa.',
+            canRequestReview: true,
           },
           { status: 400 }
         );
       }
 
-      const updated = dataStore.recordClockOut({
+      // Proteger salida ya registrada (evitar sobreescrituras en reintentos)
+      if (targetAtt.clockOutTime) {
+        return NextResponse.json({
+          success: true,
+          message: 'La marcación de salida ya había sido registrada exitosamente para esta jornada.',
+          attendance: targetAtt,
+        });
+      }
+
+      const updated = await dbService.recordClockOut({
         attendanceId: targetAtt.id,
         timestamp: serverTimestamp,
         lat,
         lng,
-        accuracy: accuracy || 10,
+        accuracy,
         distanceMeters: geoValidation.distanceMeters,
         status: 'VALID',
         idempotencyToken,
@@ -95,38 +118,66 @@ export async function POST(request: Request) {
       });
     }
 
-    // 4. Marcación de Entrada ('IN')
-    // Verificar si ya tiene entrada hoy
-    const existingToday = dataStore.getAttendanceByDate(session.userId, todayStr);
+    // 7. Procesar Entrada ('IN')
+    // Verificar si ya tiene entrada hoy (manejo coherente de reintentos y dobles toques)
+    const existingToday = await dbService.getAttendanceForUserAndDate(session.userId, todayStr);
     if (existingToday && existingToday.clockInTime) {
+      return NextResponse.json({
+        success: true,
+        message: 'La marcación de entrada ya había sido registrada exitosamente para hoy.',
+        attendance: existingToday,
+      });
+    }
+
+    // Buscar turno programado de hoy publicado
+    const userShifts = await dbService.listShifts(
+      session.organizationId,
+      todayStr,
+      todayStr,
+      undefined,
+      session.userId,
+      true // Solo turnos publicados
+    );
+    const currentShift = userShifts[0];
+
+    // Caso día libre o turno sin publicar
+    if (!currentShift) {
+      // Verificar si hay turno cargado pero no publicado
+      const allShifts = await dbService.listShifts(session.organizationId, todayStr, todayStr, undefined, session.userId, false);
+      const isUnpublished = allShifts.length > 0;
+
       return NextResponse.json(
         {
-          error: 'Ya registraste tu entrada para la jornada de hoy.',
-          attendance: existingToday,
+          error: isUnpublished
+            ? 'Tu turno para hoy aún no ha sido publicado por la administración. Si debes cubrir la jornada, solicita una revisión administrativa.'
+            : 'No tienes un turno programado para la fecha de hoy. Si fuiste convocado para un reemplazo, solicita una revisión administrativa.',
+          canRequestReview: true,
         },
         { status: 400 }
       );
     }
 
-    // Buscar turno programado de hoy
-    const userShifts = dataStore.listShifts(session.organizationId, {
-      userId: session.userId,
-      startDate: todayStr,
-      endDate: todayStr,
-    });
-    const currentShift = userShifts[0];
+    if (currentShift.shiftCode === 'L') {
+      return NextResponse.json(
+        {
+          error: 'Hoy tienes asignado día libre en el calendario. Si fuiste convocado a cubrir una guardia, solicita una revisión administrativa para registrar tu ingreso.',
+          canRequestReview: true,
+        },
+        { status: 400 }
+      );
+    }
 
-    const att = dataStore.recordClockIn({
+    const att = await dbService.recordClockIn({
       userId: session.userId,
       organizationId: session.organizationId,
       date: todayStr,
       timestamp: serverTimestamp,
       lat,
       lng,
-      accuracy: accuracy || 10,
+      accuracy,
       distanceMeters: geoValidation.distanceMeters,
       status: 'VALID',
-      shiftId: currentShift?.id || null,
+      shiftId: currentShift.id,
       idempotencyToken,
     });
 
@@ -135,11 +186,11 @@ export async function POST(request: Request) {
       message: 'Marcación de entrada registrada exitosamente.',
       attendance: att,
     });
-  } catch (error) {
-    console.error('Error en marcación:', error);
-    return NextResponse.json(
-      { error: 'Error inesperado al procesar la marcación de asistencia.' },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    console.error('Error registrando marcación:', error);
+    return NextResponse.json({ error: 'Error interno al registrar la marcación.' }, { status: 500 });
   }
 }

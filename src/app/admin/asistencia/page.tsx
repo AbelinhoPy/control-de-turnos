@@ -16,7 +16,7 @@ import {
   Calendar,
   Sparkles,
 } from 'lucide-react';
-import { formatTimeAsuncion, getDayNameEs } from '@/lib/time/timezone';
+import { formatTimeAsuncion, getDayNameEs, getCurrentDateAsuncion } from '@/lib/time/timezone';
 
 interface EnrichedAttendance {
   id: string;
@@ -50,7 +50,7 @@ interface CrewItem {
 }
 
 export default function AttendanceControlPage() {
-  const [selectedDate, setSelectedDate] = useState('2026-11-08');
+  const [selectedDate, setSelectedDate] = useState(getCurrentDateAsuncion());
   const [attendances, setAttendances] = useState<EnrichedAttendance[]>([]);
   const [crews, setCrews] = useState<CrewItem[]>([]);
   const [loading, setLoading] = useState(true);

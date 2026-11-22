@@ -1,7 +1,10 @@
 // src/db/migrate.ts
-import { drizzle } from 'drizzle-orm/neon-http';
-import { migrate } from 'drizzle-orm/neon-http/migrator';
+import { drizzle as drizzleNeon } from 'drizzle-orm/neon-http';
+import { migrate as migrateNeon } from 'drizzle-orm/neon-http/migrator';
+import { drizzle as drizzleNodePg } from 'drizzle-orm/node-postgres';
+import { migrate as migrateNodePg } from 'drizzle-orm/node-postgres/migrator';
 import { neon } from '@neondatabase/serverless';
+import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
 
@@ -38,13 +41,22 @@ async function runMigrations() {
     process.exit(1);
   }
 
-  console.log('⚡ Conectando a Neon Postgres para aplicar migraciones versionadas...');
-  const sql = neon(connectionString);
-  const db = drizzle(sql);
+  console.log('⚡ Conectando a la base de datos para aplicar migraciones versionadas...');
+  
+  if (connectionString.includes('neon.tech') && !connectionString.includes('localhost')) {
+    const sql = neon(connectionString);
+    const db = drizzleNeon(sql);
+    console.log('📦 Aplicando migraciones en Neon Postgres desde ./drizzle ...');
+    await migrateNeon(db, { migrationsFolder: './drizzle' });
+  } else {
+    const pool = new Pool({ connectionString });
+    const db = drizzleNodePg(pool);
+    console.log('📦 Aplicando migraciones en PostgreSQL local desde ./drizzle ...');
+    await migrateNodePg(db, { migrationsFolder: './drizzle' });
+    await pool.end();
+  }
 
-  console.log('📦 Aplicando migraciones desde ./drizzle ...');
-  await migrate(db, { migrationsFolder: './drizzle' });
-  console.log('✅ Migraciones aplicadas exitosamente en Neon Postgres.');
+  console.log('✅ Migraciones aplicadas exitosamente.');
 }
 
 runMigrations().catch((err) => {

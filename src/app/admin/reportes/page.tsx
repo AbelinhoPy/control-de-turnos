@@ -16,7 +16,7 @@ import {
   Sparkles,
   FileText,
 } from 'lucide-react';
-import { getDayNameEs, getShortDayNameEs, formatTimeAsuncion, getDatesInRange } from '@/lib/time/timezone';
+import { getDayNameEs, getShortDayNameEs, formatTimeAsuncion, getDatesInRange, getDateRangePresets } from '@/lib/time/timezone';
 
 type ReportType =
   | 'horas-jornales'
@@ -79,9 +79,10 @@ interface IncidentItem {
 }
 
 export default function ReportsModulePage() {
+  const initialPresets = getDateRangePresets();
   const [reportType, setReportType] = useState<ReportType>('horas-jornales');
-  const [startDate, setStartDate] = useState('2026-11-01');
-  const [endDate, setEndDate] = useState('2026-11-15');
+  const [startDate, setStartDate] = useState(initialPresets.primeraQuincena.startDate);
+  const [endDate, setEndDate] = useState(initialPresets.primeraQuincena.endDate);
   const [selectedUser, setSelectedUser] = useState<string>('ALL');
   const [selectedCrew, setSelectedCrew] = useState<string>('ALL');
   const [includeDeactivated, setIncludeDeactivated] = useState(true);
@@ -120,36 +121,45 @@ export default function ReportsModulePage() {
       .finally(() => setLoading(false));
   }, [startDate, endDate]);
 
-  const handlePreset = (preset: 'hoy' | 'semana' | 'q1' | 'q2' | 'mes') => {
+  const handlePreset = (preset: 'hoy' | 'semana' | 'q1' | 'q2' | 'mes' | 'demo') => {
+    const presets = getDateRangePresets();
     if (preset === 'hoy') {
-      setStartDate('2026-11-08');
-      setEndDate('2026-11-08');
+      setStartDate(presets.hoy.startDate);
+      setEndDate(presets.hoy.endDate);
     } else if (preset === 'semana') {
-      setStartDate('2026-11-02');
-      setEndDate('2026-11-08');
+      setStartDate(presets.estaSemana.startDate);
+      setEndDate(presets.estaSemana.endDate);
     } else if (preset === 'q1') {
-      setStartDate('2026-11-01');
-      setEndDate('2026-11-15');
+      setStartDate(presets.primeraQuincena.startDate);
+      setEndDate(presets.primeraQuincena.endDate);
     } else if (preset === 'q2') {
-      setStartDate('2026-11-16');
-      setEndDate('2026-11-30');
+      setStartDate(presets.segundaQuincena.startDate);
+      setEndDate(presets.segundaQuincena.endDate);
     } else if (preset === 'mes') {
-      setStartDate('2026-11-01');
-      setEndDate('2026-11-30');
+      setStartDate(presets.mesCompleto.startDate);
+      setEndDate(presets.mesCompleto.endDate);
+    } else if (preset === 'demo') {
+      setStartDate(presets.noviembreDemo.startDate);
+      setEndDate(presets.noviembreDemo.endDate);
     }
   };
 
   const getExcelDownloadUrl = () => {
-    if (reportType === 'cobertura') {
-      return `/api/export/excel?type=planning&startDate=${startDate}&endDate=${endDate}`;
-    }
     const userParam = selectedUser !== 'ALL' ? `&userId=${selectedUser}` : '';
-    return `/api/export/excel?type=history&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${userParam}`;
+    const crewParam = selectedCrew !== 'ALL' ? `&crewId=${selectedCrew}` : '';
+    return `/api/export/excel?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}`;
   };
 
   const getPdfDownloadUrl = () => {
     const userParam = selectedUser !== 'ALL' ? `&userId=${selectedUser}` : '';
-    return `/api/export/pdf?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${userParam}`;
+    const crewParam = selectedCrew !== 'ALL' ? `&crewId=${selectedCrew}` : '';
+    return `/api/export/pdf?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}`;
+  };
+
+  const getCsvDownloadUrl = () => {
+    const userParam = selectedUser !== 'ALL' ? `&userId=${selectedUser}` : '';
+    const crewParam = selectedCrew !== 'ALL' ? `&crewId=${selectedCrew}` : '';
+    return `/api/export/csv?startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}`;
   };
 
   const reportTabs = [
@@ -191,7 +201,7 @@ export default function ReportsModulePage() {
         {/* Botones de Descarga */}
         <div className="flex flex-wrap items-center gap-2.5">
           <a
-            href={`/api/export/csv?startDate=${startDate}&endDate=${endDate}`}
+            href={getCsvDownloadUrl()}
             className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 shadow-xs transition"
           >
             <Download className="w-3.5 h-3.5" />

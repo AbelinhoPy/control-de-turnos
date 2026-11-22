@@ -21,6 +21,8 @@ export async function GET(request: Request) {
     const startDate = searchParams.get('startDate') || '2026-11-01';
     const endDate = searchParams.get('endDate') || '2026-11-15';
     const userId = searchParams.get('userId') || undefined;
+    const crewId = searchParams.get('crewId') || undefined;
+    const closureId = searchParams.get('closureId') || undefined;
     const includeDeactivated = searchParams.get('includeDeactivated') === 'true';
 
     const pdfBuffer = await generateReportPdf({
@@ -28,7 +30,9 @@ export async function GET(request: Request) {
       reportType,
       startDate,
       endDate,
-      userId,
+      userId: userId && userId !== 'ALL' ? userId : undefined,
+      crewId: crewId && crewId !== 'ALL' ? crewId : undefined,
+      closureId,
       includeDeactivated,
     });
 
@@ -40,7 +44,10 @@ export async function GET(request: Request) {
         'Content-Disposition': `attachment; filename="${filename}"`,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error('Error generando PDF:', error);
     return NextResponse.json({ error: 'Error al exportar documento PDF.' }, { status: 500 });
   }

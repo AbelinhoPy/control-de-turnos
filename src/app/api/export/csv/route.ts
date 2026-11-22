@@ -1,7 +1,7 @@
 // src/app/api/export/csv/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 import { getDayNameEs, formatTimeAsuncion } from '@/lib/time/timezone';
 
 export async function GET(request: Request) {
@@ -14,11 +14,23 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const startDate = searchParams.get('startDate') || '2026-11-01';
     const endDate = searchParams.get('endDate') || '2026-11-15';
-    const org = dataStore.getOrganization(session.organizationId);
-    const users = dataStore.listUsers(session.organizationId, true).filter((u) => u.role !== 'ADMIN');
-    const shifts = dataStore.listShifts(session.organizationId, { startDate, endDate });
-    const attendances = dataStore.listAttendances(session.organizationId, { startDate, endDate });
-    const crews = dataStore.listCrews(session.organizationId);
+    const crewId = searchParams.get('crewId') || undefined;
+    const userId = searchParams.get('userId') || undefined;
+
+    const org = await dbService.getOrganization(session.organizationId);
+    let users = await dbService.listUsers(session.organizationId, true);
+    users = users.filter((u) => u.role !== 'ADMIN');
+
+    if (crewId && crewId !== 'ALL') {
+      users = users.filter((u) => u.crewId === crewId);
+    }
+    if (userId && userId !== 'ALL') {
+      users = users.filter((u) => u.id === userId);
+    }
+
+    const shifts = await dbService.listShifts(session.organizationId, startDate, endDate, crewId, userId);
+    const attendances = await dbService.listAttendances(session.organizationId, { startDate, endDate, crewId, userId });
+    const crews = await dbService.listCrews(session.organizationId);
 
     // Encabezados con BOM para que Excel en Windows reconozca tildes y caracteres en español
     const BOM = '\uFEFF';
@@ -49,67 +61,66 @@ export async function GET(request: Request) {
         '"Jornal Base (PYG)"',
         '"Estado Jornada"',
         '"Corrección Manual"',
-        '"Motivo / Observaciones"',
-        '"Auditado Por"',
+        '"Motivo Corrección"',
       ].join(';')
     );
 
-    // Filas detalladas
+    const crewMap = new Map(crews.map((c) => [c.id, c.name]));
+
     shifts.forEach((shift) => {
       const user = users.find((u) => u.id === shift.userId);
       if (!user) return;
-      const crew = crews.find((c) => c.id === user.crewId);
-      const att = attendances.find((a) => a.userId === user.id && a.date === shift.date);
 
-      const inTime = att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '';
-      const outTime = att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '';
-      const workedDays = att ? Number(att.workedDays).toFixed(1) : '0.0';
-      const dayHours = att ? Number(att.dayHours).toFixed(1) : '0.0';
-      const nightHours = att ? Number(att.nightHours).toFixed(1) : '0.0';
-      const totalHours = att ? Number(att.totalHours).toFixed(1) : '0.0';
+      const att = attendances.find((a) => a.userId === shift.userId && a.date === shift.date);
+      const crewName = user.crewId ? crewMap.get(user.crewId) || 'Sin cuadrilla' : 'Sin cuadrilla';
 
+      const inTime = att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--';
+      const outTime = att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--';
+      const workedDays = att ? Number(att.workedDays) : 0;
+      const dayHours = att ? Number(att.dayHours) : 0;
+      const nightHours = att ? Number(att.nightHours) : 0;
+      const totalHours = att ? Number(att.totalHours) : 0;
+      const baseDailyWage = user.baseDailyWage || 100000;
+      const status = att?.status || (shift.shiftCode === 'L' ? 'LIBRE' : 'SIN_MARCAR');
       const isManual = att?.isManualCorrection ? 'SÍ' : 'NO';
-      const obs = (att?.notes || att?.correctionReason || (shift.shiftCode === 'L' ? 'Día Libre' : '')).replace(
-        /"/g,
-        '""'
-      );
-      const auditor = (att?.correctedByName || '').replace(/"/g, '""');
+      const reason = (att?.correctionReason || att?.notes || '').replace(/"/g, '""');
 
       rows.push(
         [
-          `"${att?.id || `sin_marca_${shift.id}`}"`,
+          `"${att?.id || '-'}"`,
           `"${user.name}"`,
-          `"${user.documentNumber || ''}"`,
-          `"${crew?.name || 'General'}"`,
+          `"${user.documentNumber || '-'}"`,
+          `"${crewName}"`,
           `"${shift.date}"`,
           `"${getDayNameEs(shift.date)}"`,
           `"${shift.shiftCode === 'L' ? 'Libre' : `Turno ${shift.shiftCode}`}"`,
           `"${inTime}"`,
           `"${outTime}"`,
-          `"${workedDays}"`,
-          `"${dayHours}"`,
-          `"${nightHours}"`,
-          `"${totalHours}"`,
-          `"${user.baseDailyWage || 0}"`,
-          `"${att?.status || (shift.shiftCode === 'L' ? 'LIBRE' : 'SIN_MARCAR')}"`,
+          `"${workedDays.toFixed(1).replace('.', ',')}"`,
+          `"${dayHours.toFixed(1).replace('.', ',')}"`,
+          `"${nightHours.toFixed(1).replace('.', ',')}"`,
+          `"${totalHours.toFixed(1).replace('.', ',')}"`,
+          `"${baseDailyWage}"`,
+          `"${status}"`,
           `"${isManual}"`,
-          `"${obs}"`,
-          `"${auditor}"`,
+          `"${reason}"`,
         ].join(';')
       );
     });
 
     const csvContent = BOM + rows.join('\r\n');
-    const filename = `Cierre_Jornadas_${startDate}_al_${endDate}.csv`;
 
     return new NextResponse(csvContent, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `attachment; filename="Reporte_Jornadas_${startDate}_al_${endDate}.csv"`,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error('Error generando CSV:', error);
-    return NextResponse.json({ error: 'Error generando archivo CSV.' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al exportar archivo CSV.' }, { status: 500 });
   }
 }

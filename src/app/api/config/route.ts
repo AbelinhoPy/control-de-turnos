@@ -1,16 +1,23 @@
 // src/app/api/config/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
-  }
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
 
-  const org = dataStore.getOrganization(session.organizationId);
-  return NextResponse.json({ organization: org });
+    const org = await dbService.getOrganization(session.organizationId);
+    return NextResponse.json({ organization: org });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    return NextResponse.json({ error: 'Error al consultar configuración' }, { status: 500 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -33,7 +40,7 @@ export async function POST(request: Request) {
       hourlyRateRuleConfirmed,
     } = body;
 
-    const updated = dataStore.updateOrganization(session.organizationId, {
+    const updated = await dbService.updateOrganization(session.organizationId, {
       workplaceName,
       workplaceLat: workplaceLat !== undefined ? Number(workplaceLat) : undefined,
       workplaceLng: workplaceLng !== undefined ? Number(workplaceLng) : undefined,
@@ -45,22 +52,15 @@ export async function POST(request: Request) {
       hourlyRateRuleConfirmed: hourlyRateRuleConfirmed !== undefined ? Boolean(hourlyRateRuleConfirmed) : undefined,
     });
 
-    dataStore.createAuditLog({
-      organizationId: session.organizationId,
-      userId: session.userId,
-      userName: session.name,
-      action: 'ORGANIZATION_CONFIG_UPDATED',
-      entity: 'organizations',
-      entityId: session.organizationId,
-      details: { updatedFields: Object.keys(body) },
-    });
-
     return NextResponse.json({
       success: true,
       message: 'Configuración de la empresa y sede actualizada correctamente.',
       organization: updated,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error('Error actualizando configuración:', error);
     return NextResponse.json({ error: 'Error al actualizar configuración.' }, { status: 500 });
   }

@@ -1,21 +1,29 @@
 // src/app/api/staff/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
+import { sendInvitationEmail } from '@/lib/email/email-service';
 
 export async function GET(request: Request) {
-  const session = await getSession();
-  if (!session || session.role !== 'ADMIN') {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'No autorizado. Solo administradores pueden consultar personal.' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const includeDeactivated = searchParams.get('includeDeactivated') === 'true';
+
+    const staff = await dbService.listUsers(session.organizationId, includeDeactivated);
+    const crews = await dbService.listCrews(session.organizationId);
+
+    return NextResponse.json({ staff, crews });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    return NextResponse.json({ error: 'Error al listar personal.' }, { status: 500 });
   }
-
-  const { searchParams } = new URL(request.url);
-  const includeDeactivated = searchParams.get('includeDeactivated') === 'true';
-
-  const staff = dataStore.listUsers(session.organizationId, includeDeactivated);
-  const crews = dataStore.listCrews(session.organizationId);
-
-  return NextResponse.json({ staff, crews });
 }
 
 export async function POST(request: Request) {
@@ -34,12 +42,12 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Nombre y correo son obligatorios para invitar.' }, { status: 400 });
       }
 
-      const existing = dataStore.getUserByEmail(email);
+      const existing = await dbService.getUserByEmail(email);
       if (existing) {
         return NextResponse.json({ error: 'Ya existe un usuario con este correo electrónico.' }, { status: 400 });
       }
 
-      const invitation = dataStore.createInvitation({
+      const invitation = await dbService.createInvitation({
         organizationId: session.organizationId,
         email,
         name,
@@ -48,23 +56,17 @@ export async function POST(request: Request) {
         invitedByUserId: session.userId,
       });
 
-      dataStore.createAuditLog({
-        organizationId: session.organizationId,
-        userId: session.userId,
-        userName: session.name,
-        action: 'STAFF_INVITED',
-        entity: 'invitations',
-        entityId: invitation.id,
-        details: { email, name, crewId },
-      });
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const inviteUrl = `${appUrl}/invitacion?token=${invitation.token}`;
 
-      const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/invitacion?token=${invitation.token}`;
+      // Enviar correo de invitación
+      await sendInvitationEmail(email, inviteUrl, name, session.name);
 
       return NextResponse.json({
         success: true,
-        message: 'Invitación generada exitosamente.',
+        message: 'Invitación generada y enviada exitosamente al correo del funcionario.',
         invitation,
-        inviteUrl,
+        inviteUrl, // Se provee al admin en la UI como respaldo
       });
     }
 
@@ -74,10 +76,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
       }
 
-      const updated = dataStore.updateUser(userId, {
+      const updated = await dbService.updateUser(userId, {
         name,
         crewId,
-        baseDailyWage: baseDailyWage ? Number(baseDailyWage) : undefined,
+        baseDailyWage: baseDailyWage !== undefined ? Number(baseDailyWage) : undefined,
         phone,
         documentNumber,
       });
@@ -85,27 +87,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, user: updated });
     }
 
-    // 3. Desactivar funcionario
+    // 3. Desactivar funcionario (Baja inmediata)
     if (action === 'DEACTIVATE') {
       if (!userId) {
         return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
       }
 
-      const deactivated = dataStore.deactivateUser(userId);
-      dataStore.createAuditLog({
-        organizationId: session.organizationId,
-        userId: session.userId,
-        userName: session.name,
-        action: 'STAFF_DEACTIVATED',
-        entity: 'users',
-        entityId: userId,
-        details: { name: deactivated.name },
-      });
+      await dbService.deactivateUser(userId, session.userId);
+      const user = await dbService.getUser(userId);
 
       return NextResponse.json({
         success: true,
-        message: `${deactivated.name} ha sido desactivado. Su acceso ha sido revocado y sus registros históricos se conservan.`,
-        user: deactivated,
+        message: `${user?.name || 'El funcionario'} ha sido dado de baja. Su sesión activa ha sido revocada inmediatamente y su historial se conserva íntegro.`,
+        user,
       });
     }
 
@@ -115,16 +109,19 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'ID de usuario requerido' }, { status: 400 });
       }
 
-      const reactivated = dataStore.reactivateUser(userId);
+      const updated = await dbService.updateUser(userId, { isActive: true });
       return NextResponse.json({
         success: true,
-        message: `${reactivated.name} ha sido reactivado exitosamente.`,
-        user: reactivated,
+        message: `${updated?.name || 'El funcionario'} ha sido reactivado exitosamente.`,
+        user: updated,
       });
     }
 
     return NextResponse.json({ error: 'Acción no reconocida' }, { status: 400 });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error('Error en gestión de personal:', error);
     return NextResponse.json({ error: 'Error procesando la solicitud de personal.' }, { status: 500 });
   }

@@ -1,4 +1,5 @@
 // tests/verification.ts
+process.env.ENABLE_DEMO_MODE = 'true';
 import { validateGeofence } from '../src/lib/geo/geofence';
 import { calculateShiftHours, APP_TIMEZONE, formatDateAsuncion } from '../src/lib/time/timezone';
 import { dataStore } from '../src/lib/data-store';

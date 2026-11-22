@@ -1,11 +1,21 @@
 // src/lib/auth/session.ts
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
+import { dbService } from '@/lib/db-service';
 
 const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'control_turnos_session';
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.AUTH_SECRET || 'control-de-turnos-secret-key-development-minimum-32-chars!'
-);
+
+function getSecretKey(): Uint8Array {
+  const secret = process.env.AUTH_SECRET || process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    if (!secret || secret.length < 32) {
+      throw new Error(
+        'CONFIG_ERROR: AUTH_SECRET (o JWT_SECRET) es obligatorio en producción y debe tener al menos 32 caracteres.'
+      );
+    }
+  }
+  return new TextEncoder().encode(secret || 'control-de-turnos-secret-key-development-minimum-32-chars!');
+}
 
 export interface UserSessionPayload {
   userId: string;
@@ -26,7 +36,7 @@ export async function createSessionToken(payload: UserSessionPayload): Promise<s
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('7d')
-    .sign(SECRET_KEY);
+    .sign(getSecretKey());
 }
 
 /**
@@ -34,7 +44,7 @@ export async function createSessionToken(payload: UserSessionPayload): Promise<s
  */
 export async function verifySessionToken(token: string): Promise<UserSessionPayload | null> {
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, getSecretKey());
     return payload as unknown as UserSessionPayload;
   } catch {
     return null;
@@ -42,7 +52,9 @@ export async function verifySessionToken(token: string): Promise<UserSessionPayl
 }
 
 /**
- * Obtiene la sesión activa desde las cookies del request del servidor
+ * Obtiene la sesión activa desde las cookies del request del servidor.
+ * Valida dinámicamente el estado actual del usuario en la base de datos para asegurar
+ * que una cuenta desactivada pierda acceso de inmediato.
  */
 export async function getSession(): Promise<UserSessionPayload | null> {
   const cookieStore = await cookies();
@@ -50,7 +62,18 @@ export async function getSession(): Promise<UserSessionPayload | null> {
   if (!token) return null;
 
   const session = await verifySessionToken(token);
-  if (!session || !session.isActive) return null;
+  if (!session) return null;
+
+  try {
+    const freshUser = await dbService.getUser(session.userId);
+    if (!freshUser || !freshUser.isActive) {
+      // El funcionario fue dado de baja: se revoca la sesión de forma inmediata
+      await clearSessionCookie();
+      return null;
+    }
+  } catch {
+    if (!session.isActive) return null;
+  }
 
   return session;
 }

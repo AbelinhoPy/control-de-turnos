@@ -1,7 +1,7 @@
 // src/app/api/attendance/correct/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 
 export async function POST(request: Request) {
   try {
@@ -20,12 +20,11 @@ export async function POST(request: Request) {
       workedDays,
       status,
       correctionReason,
-      notes,
     } = body;
 
     if (!correctionReason || correctionReason.trim().length < 5) {
       return NextResponse.json(
-        { error: 'Debe ingresar un motivo descriptivo y obligatorio para la corrección.' },
+        { error: 'Debe ingresar un motivo descriptivo y obligatorio para la corrección (mínimo 5 caracteres).' },
         { status: 400 }
       );
     }
@@ -37,31 +36,30 @@ export async function POST(request: Request) {
       );
     }
 
-    const corrected = dataStore.correctAttendance({
+    const corrected = await dbService.correctAttendance({
       attendanceId,
       userId,
       organizationId: session.organizationId,
       date,
-      clockInTime: clockInTime || null,
-      clockOutTime: clockOutTime || null,
+      clockInTime: clockInTime || undefined,
+      clockOutTime: clockOutTime || undefined,
       workedDays: workedDays !== undefined ? Number(workedDays) : undefined,
       status: status || 'COMPLETA',
-      correctionReason: correctionReason.trim(),
-      correctedByUserId: session.userId,
-      correctedByName: session.name,
-      notes,
+      reason: correctionReason.trim(),
+      adminUserId: session.userId,
+      adminName: session.name,
     });
 
     return NextResponse.json({
       success: true,
-      message: 'Jornada corregida y registrada en la auditoría con éxito.',
+      message: 'Jornada corregida y registrada en la bitácora inmutable de auditoría con éxito.',
       attendance: corrected,
     });
-  } catch (error) {
-    console.error('Error en corrección:', error);
-    return NextResponse.json(
-      { error: 'Error al procesar la corrección administrativa.' },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    console.error('Error en corrección manual:', error);
+    return NextResponse.json({ error: 'Error al procesar la corrección manual.' }, { status: 500 });
   }
 }

@@ -134,29 +134,52 @@ git push -u origin main
 ### Paso 2: Conectar con Vercel
 1. Ingresá a [vercel.com](https://vercel.com) e importá el repositorio de GitHub.
 2. En la sección **Environment Variables**, agregá:
-   - `DATABASE_URL`: La URL de tu base de datos Neon Postgres.
+   - `ENABLE_DEMO_MODE`: `false` (Exige base de datos Neon real en producción).
+   - `DATABASE_URL`: La URL de tu base de datos Neon Postgres (`postgresql://...?sslmode=require`).
    - `AUTH_SECRET`: Cadena aleatoria de 32+ caracteres (`openssl rand -base64 32`).
    - `SESSION_COOKIE_NAME`: `control_turnos_session`
    - `APP_TIMEZONE`: `America/Asuncion`
    - `NEXT_PUBLIC_APP_URL`: La URL de producción (`https://tu-proyecto.vercel.app`).
-   - `NEXT_PUBLIC_DEFAULT_WORKPLACE_LAT`: `-25.2867`
-   - `NEXT_PUBLIC_DEFAULT_WORKPLACE_LNG`: `-57.6470`
+   - `NEXT_PUBLIC_DEFAULT_WORKPLACE_NAME`: `Sede Operativa - Minga Guazú`
+   - `NEXT_PUBLIC_DEFAULT_WORKPLACE_LAT`: `-25.496469`
+   - `NEXT_PUBLIC_DEFAULT_WORKPLACE_LNG`: `-54.789641`
    - `NEXT_PUBLIC_DEFAULT_GEOFENCE_RADIUS_METERS`: `300`
+   - `RESEND_API_KEY`: Tu clave de API de Resend para envío de correos de recuperación.
+   - `EMAIL_FROM`: `Control de Turnos <notificaciones@tuempresa.com.py>`
 3. Hacé clic en **Deploy**.
 
 ---
 
 ## 🧪 Comprobación de Pruebas Automatizadas
 
-El proyecto cuenta con una suite completa de 25 pruebas automatizadas:
+El proyecto cuenta con dos suites de verificación exhaustiva:
+
+### 1. Pruebas Unitarias y de Lógica de Negocio (25 pruebas)
 ```bash
-npx tsx tests/verification.ts
+npm test
+# o: npx tsx tests/verification.ts
 ```
 Verifica:
-- Geocerca GPS (adentro, afuera, baja precisión).
-- Turnos nocturnos de 22:00 a 06:00 que cruzan medianoche.
-- Medios jornales aprobados (4h).
-- Prevención de duplicados por doble toque (idempotencia).
-- Corrección manual de marcas con motivo obligatorio y bitácora de auditoría.
-- Conservación de registros para funcionarios dados de baja.
-- Exportación exacta a Excel (.xlsx) y PDF (A4).
+- Geocerca GPS (adentro, afuera, precisión faltante o degradada).
+- Cálculo de turnos nocturnos de 22:00 a 06:00 que cruzan medianoche.
+- Medios jornales aprobados (4h+) y jornales completos (7h+).
+- Prevención de duplicados por doble toque (idempotencia en entrada y salida).
+- Corrección manual de marcas con motivo obligatorio (mínimo 5 caracteres) y bitácora de auditoría inmutable.
+- Conservación de registros históricos para funcionarios dados de baja.
+- Exportación exacta a Excel (.xlsx) y PDF (A4) de los 6 reportes administrativos.
+
+### 2. Pruebas de Integración con PostgreSQL / Neon Real (26 pruebas)
+```bash
+npm run test:integration
+```
+Verifica contra una base de datos PostgreSQL real:
+- Rechazo explícito con código `DB_NOT_CONFIGURED` cuando falta `DATABASE_URL` y `ENABLE_DEMO_MODE` está apagado.
+- Creación de organizaciones con plantillas (M/T/N/L) y cuadrillas iniciales.
+- Asignación de turnos y publicación de cronograma.
+- Marcación de entrada y salida con validación geolocalizada en servidor.
+- Idempotencia real en base de datos frente a dobles toques.
+- Cálculo exacto de horas nocturnas (franja 20:00 a 06:00 con 30% de recargo).
+- Creación de cierres de período congelados con detalle inmutable (`jsonb`).
+- Exportación de cierres consultando por su ID específico (`closureId`).
+- Revocación inmediata de sesión al dar de baja un funcionario.
+- Integridad referencial y persistencia de datos tras desconexión y reconexión.

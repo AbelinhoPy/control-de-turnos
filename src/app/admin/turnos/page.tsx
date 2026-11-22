@@ -150,7 +150,7 @@ export default function ShiftPlanningPage() {
         {/* Acciones principales */}
         <div className="flex flex-wrap items-center gap-2.5">
           <a
-            href={`/api/export/excel?type=planning&startDate=${startDate}&endDate=${endDate}`}
+            href={`/api/export/excel?type=planning&startDate=${startDate}&endDate=${endDate}&crewId=${selectedCrew !== 'ALL' ? selectedCrew : ''}`}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-700 text-white hover:bg-emerald-800 shadow-sm transition"
           >
             <Download className="w-3.5 h-3.5" />
@@ -158,7 +158,7 @@ export default function ShiftPlanningPage() {
           </a>
 
           <a
-            href={`/api/export/pdf?reportType=cobertura&startDate=${startDate}&endDate=${endDate}`}
+            href={`/api/export/pdf?reportType=cobertura&startDate=${startDate}&endDate=${endDate}&crewId=${selectedCrew !== 'ALL' ? selectedCrew : ''}`}
             target="_blank"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition"
           >

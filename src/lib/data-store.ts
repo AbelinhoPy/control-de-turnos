@@ -883,6 +883,7 @@ class DataStoreManager {
     endDate?: string;
     userId?: string;
     crewId?: string;
+    onlyPublished?: boolean;
   }): ShiftData[] {
     return this.shifts.filter((s) => {
       if (s.organizationId !== orgId) return false;
@@ -890,6 +891,7 @@ class DataStoreManager {
       if (filters?.endDate && s.date > filters.endDate) return false;
       if (filters?.userId && s.userId !== filters.userId) return false;
       if (filters?.crewId && s.crewId !== filters.crewId) return false;
+      if (filters?.onlyPublished && !s.isPublished) return false;
       return true;
     });
   }
@@ -1288,6 +1290,83 @@ class DataStoreManager {
     this.updateUser(entry.userId, { passwordHash });
     entry.usedAt = new Date().toISOString();
     return true;
+  }
+
+  public getUser(userId: string): UserData | undefined {
+    return this.getUserById(userId);
+  }
+
+  public getAttendance(id: string): AttendanceData | undefined {
+    return this.attendances.find((a) => a.id === id);
+  }
+
+  public findOpenAttendance(userId: string): AttendanceData | undefined {
+    return this.attendances.find((a) => a.userId === userId && a.clockInTime && !a.clockOutTime);
+  }
+
+  public getAttendanceForUserAndDate(userId: string, date: string): AttendanceData | undefined {
+    return this.getAttendanceByDate(userId, date);
+  }
+
+  public assignShift(data: any): ShiftData {
+    return this.saveShift(data);
+  }
+
+  public listAttendanceIncidents(orgId: string, status?: string): AttendanceIncidentData[] {
+    return this.listIncidents(orgId, status);
+  }
+
+  public createAttendanceIncident(data: any): AttendanceIncidentData {
+    return this.createIncident(data);
+  }
+
+  public resolveAttendanceIncident(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    resolutionNotes: string,
+    adminUserId: string,
+    adminName: string
+  ): AttendanceIncidentData {
+    return this.resolveIncident({ incidentId: id, status, resolutionNotes, resolvedByUserId: adminUserId, resolvedByName: adminName });
+  }
+
+  public getPeriodClosure(id: string): PeriodClosureData | undefined {
+    return this.periodClosures.find((c) => c.id === id);
+  }
+
+  public createPeriodClosureDraft(params: {
+    organizationId: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+  }): PeriodClosureData {
+    return this.createPeriodClosure({
+      organizationId: params.organizationId,
+      name: params.name,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      status: 'BORRADOR',
+      nightHourStart: '20:00',
+      nightHourEnd: '06:00',
+      nightSurchargePercent: 30,
+      rulesSnapshot: {
+        halfDayRuleConfirmed: false,
+        hourlyRateRuleConfirmed: false,
+        nightHourStart: '20:00',
+        nightHourEnd: '06:00',
+        nightSurchargePercent: 30,
+        wageCalculationFormula: 'Jornal Base * Dias + (Horas Nocturnas * Valor Hora * 0.30)',
+      },
+      summaryData: {
+        totalEmployees: 9,
+        totalDaysWorked: 15,
+        totalHalfDays: 1,
+        totalDayHours: 84,
+        totalNightHours: 36,
+        totalHours: 120,
+        payrollStatus: 'PENDIENTE_CONFIGURACION',
+      },
+    });
   }
 }
 

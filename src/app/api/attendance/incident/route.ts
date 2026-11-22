@@ -1,22 +1,28 @@
 // src/app/api/attendance/incident/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 
 export async function GET() {
-  const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+  try {
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    const incidents = await dbService.listAttendanceIncidents(session.organizationId);
+    const filtered =
+      session.role === 'ADMIN'
+        ? incidents
+        : incidents.filter((i) => i.userId === session.userId);
+
+    return NextResponse.json({ incidents: filtered });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    return NextResponse.json({ error: 'Error consultando incidencias.' }, { status: 500 });
   }
-
-  const incidents = dataStore.listIncidents(session.organizationId);
-  // Si es funcionario, solo sus incidencias
-  const filtered =
-    session.role === 'ADMIN'
-      ? incidents
-      : incidents.filter((i) => i.userId === session.userId);
-
-  return NextResponse.json({ incidents: filtered });
 }
 
 export async function POST(request: Request) {
@@ -38,15 +44,13 @@ export async function POST(request: Request) {
         );
       }
 
-      const incident = dataStore.createIncident({
+      const incident = await dbService.createAttendanceIncident({
         organizationId: session.organizationId,
         userId: session.userId,
-        userName: session.name,
-        attendanceId: attendanceId || null,
+        attendanceId: attendanceId || undefined,
         date,
         type,
         description,
-        status: 'PENDING',
       });
 
       return NextResponse.json({ success: true, incident });
@@ -61,25 +65,32 @@ export async function POST(request: Request) {
       const { incidentId, status, resolutionNotes } = body;
       if (!incidentId || !status || !resolutionNotes) {
         return NextResponse.json(
-          { error: 'ID de incidencia, estado y notas de resolución son requeridos.' },
+          { error: 'ID de incidencia, resolución (APPROVED/REJECTED) y notas requeridas.' },
           { status: 400 }
         );
       }
 
-      const resolved = dataStore.resolveIncident({
+      const updated = await dbService.resolveAttendanceIncident(
         incidentId,
         status,
         resolutionNotes,
-        resolvedByUserId: session.userId,
-        resolvedByName: session.name,
-      });
+        session.userId,
+        session.name
+      );
 
-      return NextResponse.json({ success: true, incident: resolved });
+      return NextResponse.json({
+        success: true,
+        message: `Incidencia ${status === 'APPROVED' ? 'aprobada' : 'rechazada'} exitosamente.`,
+        incident: updated,
+      });
     }
 
     return NextResponse.json({ error: 'Acción no válida' }, { status: 400 });
-  } catch (error) {
-    console.error('Error en incidencias:', error);
-    return NextResponse.json({ error: 'Error procesando la solicitud de incidencia.' }, { status: 500 });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    console.error('Error procesando incidencia:', error);
+    return NextResponse.json({ error: 'Error procesando solicitud de incidencia.' }, { status: 500 });
   }
 }

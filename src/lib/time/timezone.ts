@@ -11,6 +11,13 @@ export function getNowInAsuncion(): Date {
 }
 
 /**
+ * Obtiene la fecha actual en formato YYYY-MM-DD en America/Asuncion
+ */
+export function getCurrentDateAsuncion(): string {
+  return formatDateAsuncion(new Date());
+}
+
+/**
  * Formatea una fecha/instante a string YYYY-MM-DD en America/Asuncion
  */
 export function formatDateAsuncion(date: Date | string | number): string {
@@ -101,7 +108,7 @@ export function calculateShiftHours(
 
   const totalHours = Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100;
 
-  // Calculamos minuto a minuto o por bloques para exactitud total con zona horaria de Asunción
+  // Calculamos minuto a minuto para exactitud total con zona horaria de Asunción
   let nightMinutes = 0;
   const stepMs = 60 * 1000; // 1 minuto
   let currentMs = inDate.getTime();
@@ -109,7 +116,6 @@ export function calculateShiftHours(
 
   while (currentMs < endMs) {
     const curDate = new Date(currentMs);
-    // Extraemos la hora en Asunción
     const hourStr = new Intl.DateTimeFormat('en-US', {
       timeZone: APP_TIMEZONE,
       hour: 'numeric',
@@ -117,7 +123,6 @@ export function calculateShiftHours(
     }).format(curDate);
     const hour = parseInt(hourStr, 10);
 
-    // ¿Es hora nocturna? (hora >= 20 || hora < 6)
     const isNight = hour >= nightStartHour || hour < nightEndHour;
     if (isNight) {
       nightMinutes++;
@@ -128,7 +133,7 @@ export function calculateShiftHours(
   const nightHours = Math.round((nightMinutes / 60) * 100) / 100;
   const dayHours = Math.round(Math.max(0, totalHours - nightHours) * 100) / 100;
 
-  // Si trabajó 4 horas o más pero menos de 7 -> medio jornal (0.5), si >= 7 -> día completo (1.0)
+  // Umbral inicial de demo (confirmable por el cliente): 4h medio jornal, >= 7h jornal completo
   let workedDays = 0;
   if (totalHours >= 7) {
     workedDays = 1.0;
@@ -165,7 +170,49 @@ export function getDatesInRange(startDateStr: string, endDateStr: string): strin
 }
 
 /**
- * Devuelve presets de fechas comunes en Asunción
+ * Devuelve el inicio y fin del mes en America/Asuncion
+ */
+export function getMonthStartEnd(referenceDate?: string | Date): { startDate: string; endDate: string } {
+  const base = referenceDate
+    ? typeof referenceDate === 'string'
+      ? new Date(`${referenceDate}T12:00:00Z`)
+      : referenceDate
+    : new Date();
+  const dateStr = formatDateAsuncion(base);
+  const [yearStr, monthStr] = dateStr.split('-');
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  const lastDay = new Date(year, month, 0).getDate();
+
+  return {
+    startDate: `${yearStr}-${monthStr}-01`,
+    endDate: `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`,
+  };
+}
+
+/**
+ * Devuelve el inicio (Lunes) y fin (Domingo) de la semana en America/Asuncion
+ */
+export function getWeekStartEnd(referenceDate?: string | Date): { startDate: string; endDate: string } {
+  const base = referenceDate
+    ? typeof referenceDate === 'string'
+      ? new Date(`${referenceDate}T12:00:00Z`)
+      : referenceDate
+    : new Date();
+  
+  const d = new Date(base);
+  const day = d.getUTCDay();
+  const diffToMonday = (day === 0 ? -6 : 1) - day;
+  d.setUTCDate(d.getUTCDate() + diffToMonday);
+  const startStr = formatDateAsuncion(d);
+  d.setUTCDate(d.getUTCDate() + 6);
+  const endStr = formatDateAsuncion(d);
+
+  return { startDate: startStr, endDate: endStr };
+}
+
+/**
+ * Devuelve presets dinámicos de fechas operativas en Asunción
  */
 export function getDateRangePresets(referenceDate = new Date()) {
   const todayStr = formatDateAsuncion(referenceDate);
@@ -175,12 +222,18 @@ export function getDateRangePresets(referenceDate = new Date()) {
 
   // Último día del mes actual
   const lastDay = new Date(year, month, 0).getDate();
+  const week = getWeekStartEnd(referenceDate);
 
   return {
     hoy: {
       label: 'Hoy',
       startDate: todayStr,
       endDate: todayStr,
+    },
+    estaSemana: {
+      label: 'Esta semana',
+      startDate: week.startDate,
+      endDate: week.endDate,
     },
     primeraQuincena: {
       label: '1ª Quincena (1 al 15)',

@@ -15,6 +15,7 @@ import {
   Calendar,
   ShieldCheck,
 } from 'lucide-react';
+import { getCurrentDateAsuncion, formatDateAsuncion } from '@/lib/time/timezone';
 
 interface AttendanceState {
   id?: string;
@@ -46,6 +47,7 @@ export default function FuncionarioMobilePage() {
   } | null>(null);
 
   // Estados de marcación
+  const [activeDate, setActiveDate] = useState<string>(() => getCurrentDateAsuncion());
   const [locating, setLocating] = useState(false);
   const [geoExplanationOpen, setGeoExplanationOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -85,12 +87,40 @@ export default function FuncionarioMobilePage() {
         });
       }
 
-      const todayStr = '2026-11-08'; // O fecha del día
-      const todayShift = (shiftsData.shifts || []).find(
-        (s: { date: string }) => s.date === todayStr
-      );
+      const todayAsuncion = getCurrentDateAsuncion();
+      const publishedShifts = (shiftsData.shifts || []).filter((s: { isPublished: boolean }) => s.isPublished);
+      let matchedShift = publishedShifts.find((s: { date: string }) => s.date === todayAsuncion);
 
-      if (todayShift) {
+      // Si no hay para hoy (ej. en modo demo o fin de semana), tomar el primero publicado
+      if (!matchedShift && publishedShifts.length > 0) {
+        matchedShift = publishedShifts[0];
+      }
+
+      const targetDate = matchedShift ? matchedShift.date : todayAsuncion;
+      setActiveDate(targetDate);
+
+      // Cargar asistencia de esa fecha operativa
+      const attRes = await fetch(`/api/attendance?startDate=${targetDate}&endDate=${targetDate}`);
+      const attData = await attRes.json();
+      const currentAtt = (attData.attendances || [])[0];
+
+      if (currentAtt) {
+        setAttendance({
+          id: currentAtt.id,
+          status: currentAtt.clockOutTime ? 'COMPLETA' : 'EN_CURSO',
+          clockInTime: currentAtt.clockInTime,
+          clockOutTime: currentAtt.clockOutTime,
+          totalHours: currentAtt.totalHours,
+          dayHours: currentAtt.dayHours,
+          nightHours: currentAtt.nightHours,
+        });
+      } else if (matchedShift?.shiftCode === 'L') {
+        setAttendance({ status: 'LIBRE' });
+      } else {
+        setAttendance({ status: 'NO_INICIADA' });
+      }
+
+      if (matchedShift) {
         const codeMap: Record<string, { name: string; time: string }> = {
           M: { name: 'Mañana', time: '06:00 a 14:00' },
           T: { name: 'Tarde', time: '14:00 a 22:00' },
@@ -98,20 +128,20 @@ export default function FuncionarioMobilePage() {
           L: { name: 'Libre', time: 'Descanso programado' },
         };
 
-        const mapped = codeMap[todayShift.shiftCode] || { name: 'Turno', time: 'Horario regular' };
+        const mapped = codeMap[matchedShift.shiftCode] || { name: 'Turno', time: 'Horario regular' };
         setShiftInfo({
-          code: todayShift.shiftCode,
+          code: matchedShift.shiftCode,
           name: mapped.name,
           timeRange: mapped.time,
           crewName: 'Mi Cuadrilla',
-          isPublished: todayShift.isPublished,
+          isPublished: matchedShift.isPublished,
         });
       } else {
         setShiftInfo({
-          code: 'M',
-          name: 'Mañana',
-          timeRange: '06:00 a 14:00',
-          crewName: 'Equipo A',
+          code: 'L',
+          name: 'Libre',
+          timeRange: 'Sin turno programado',
+          crewName: 'Mi Cuadrilla',
           isPublished: true,
         });
       }
@@ -221,7 +251,7 @@ export default function FuncionarioMobilePage() {
           action: 'CREATE',
           type: reviewType,
           description: reviewDescription,
-          date: '2026-11-08',
+          date: activeDate,
         }),
       });
       if (res.ok) {

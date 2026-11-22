@@ -1,5 +1,5 @@
 // src/db/schema.ts
-import { pgTable, text, timestamp, boolean, integer, doublePrecision, numeric, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, boolean, integer, doublePrecision, numeric, jsonb, uniqueIndex } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // 1. Organizaciones (SaaS Multi-tenant listo)
@@ -80,7 +80,9 @@ export const shifts = pgTable('shifts', {
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  uniqueIndex('shifts_org_user_date_idx').on(t.organizationId, t.userId, t.date),
+]);
 
 // 6. Asistencia y Marcaciones Reales
 export const attendances = pgTable('attendances', {
@@ -127,7 +129,10 @@ export const attendances = pgTable('attendances', {
   
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  uniqueIndex('attendances_org_user_date_idx').on(t.organizationId, t.userId, t.date),
+  uniqueIndex('attendances_idempotency_idx').on(t.idempotencyToken),
+]);
 
 // 7. Incidencias y Solicitudes de Revisión
 export const attendanceIncidents = pgTable('attendance_incidents', {
@@ -160,6 +165,7 @@ export const periodClosures = pgTable('period_closures', {
   nightSurchargePercent: integer('night_surcharge_percent').notNull().default(30),
   rulesSnapshot: jsonb('rules_snapshot'), // Snapshot inmutable de reglas vigentes al momento del cierre
   summaryData: jsonb('summary_data'), // Datos consolidados inmutables
+  detailsSnapshot: jsonb('details_snapshot'), // Detalle consolidado inmutable por persona y jornada
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -11,7 +11,9 @@ import {
   ShieldCheck,
   ArrowRight,
   Clock,
+  Sparkles,
 } from 'lucide-react';
+import { getDateRangePresets } from '@/lib/time/timezone';
 
 interface PeriodClosure {
   id: string;
@@ -183,7 +185,7 @@ export default function PeriodClosuresPage() {
                   </a>
 
                   <a
-                    href={`/api/export/excel?type=history&startDate=${closure.startDate}&endDate=${closure.endDate}`}
+                    href={`/api/export/excel?type=cierre&closureId=${closure.id}&startDate=${closure.startDate}&endDate=${closure.endDate}`}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 transition"
                   >
                     <Download className="w-3.5 h-3.5" />
@@ -191,7 +193,7 @@ export default function PeriodClosuresPage() {
                   </a>
 
                   <a
-                    href={`/api/export/pdf?reportType=cierre&startDate=${closure.startDate}&endDate=${closure.endDate}`}
+                    href={`/api/export/pdf?reportType=cierre&closureId=${closure.id}&startDate=${closure.startDate}&endDate=${closure.endDate}`}
                     target="_blank"
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-petroleum-50 text-petroleum-800 border border-petroleum-200 hover:bg-petroleum-100 transition"
                   >
@@ -290,6 +292,61 @@ export default function PeriodClosuresPage() {
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 space-y-4">
             <h3 className="text-base font-bold text-slate-900">Crear Nuevo Cierre de Período</h3>
             <form onSubmit={handleCreateClosure} className="space-y-3.5">
+              {/* Presets rápidos */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Períodos Sugeridos</label>
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = getDateRangePresets();
+                      setNewName(`1ª Quincena ${p.primeraQuincena.startDate.substring(0, 7)}`);
+                      setNewStartDate(p.primeraQuincena.startDate);
+                      setNewEndDate(p.primeraQuincena.endDate);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                  >
+                    1ª Quincena
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = getDateRangePresets();
+                      setNewName(`2ª Quincena ${p.segundaQuincena.startDate.substring(0, 7)}`);
+                      setNewStartDate(p.segundaQuincena.startDate);
+                      setNewEndDate(p.segundaQuincena.endDate);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                  >
+                    2ª Quincena
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = getDateRangePresets();
+                      setNewName(`Mes ${p.mesCompleto.startDate.substring(0, 7)}`);
+                      setNewStartDate(p.mesCompleto.startDate);
+                      setNewEndDate(p.mesCompleto.endDate);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
+                  >
+                    Mes Completo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = getDateRangePresets();
+                      setNewName('Noviembre 2026 (Demo MEPY)');
+                      setNewStartDate(p.noviembreDemo.startDate);
+                      setNewEndDate(p.noviembreDemo.endDate);
+                    }}
+                    className="px-2 py-1 rounded-lg bg-petroleum-100 hover:bg-petroleum-200 text-petroleum-800 font-medium"
+                  >
+                    Noviembre 2026 (Demo)
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-slate-700">Nombre del Período</label>
                 <input

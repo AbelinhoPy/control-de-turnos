@@ -1,16 +1,34 @@
 // src/app/api/closures/route.ts
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 
-export async function GET() {
-  const session = await getSession();
-  if (!session || session.role !== 'ADMIN') {
-    return NextResponse.json({ error: 'No autorizado' }, { status: 403 });
+export async function GET(request: Request) {
+  try {
+    const session = await getSession();
+    if (!session || session.role !== 'ADMIN') {
+      return NextResponse.json({ error: 'No autorizado. Solo administradores pueden consultar cierres.' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const closureId = searchParams.get('id');
+
+    if (closureId) {
+      const closure = await dbService.getPeriodClosure(closureId);
+      if (!closure) {
+        return NextResponse.json({ error: 'Cierre no encontrado' }, { status: 404 });
+      }
+      return NextResponse.json({ closure });
+    }
+
+    const closures = await dbService.listPeriodClosures(session.organizationId);
+    return NextResponse.json({ closures });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    return NextResponse.json({ error: 'Error consultando cierres.' }, { status: 500 });
   }
-
-  const closures = dataStore.listPeriodClosures(session.organizationId);
-  return NextResponse.json({ closures });
 }
 
 export async function POST(request: Request) {
@@ -23,13 +41,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { action, name, startDate, endDate, closureId } = body;
 
-    // 1. Aprobar cierre existente
+    // 1. Aprobar cierre existente (Snapshot inmutable)
     if (action === 'APPROVE') {
       if (!closureId) {
         return NextResponse.json({ error: 'ID de cierre requerido' }, { status: 400 });
       }
 
-      const approved = dataStore.approvePeriodClosure(closureId, session.userId, session.name);
+      const approved = await dbService.approvePeriodClosure(closureId, session.userId, session.name);
       return NextResponse.json({
         success: true,
         message: 'Cierre de período aprobado. Los registros de este período han quedado congelados inmutablemente.',
@@ -42,58 +60,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nombre, fecha inicio y fin son obligatorios.' }, { status: 400 });
     }
 
-    const org = dataStore.getOrganization(session.organizationId);
-    const users = dataStore.listUsers(session.organizationId, true).filter((u) => u.role !== 'ADMIN');
-    const attendances = dataStore.listAttendances(session.organizationId, { startDate, endDate });
-
-    let totalDaysWorked = 0;
-    let totalHalfDays = 0;
-    let totalDayHours = 0;
-    let totalNightHours = 0;
-    let totalHours = 0;
-
-    attendances.forEach((a) => {
-      const wd = Number(a.workedDays);
-      if (wd === 0.5) totalHalfDays++;
-      totalDaysWorked += wd;
-      totalDayHours += Number(a.dayHours);
-      totalNightHours += Number(a.nightHours);
-      totalHours += Number(a.totalHours);
-    });
-
-    const closure = dataStore.createPeriodClosure({
+    const draft = await dbService.createPeriodClosureDraft({
       organizationId: session.organizationId,
       name,
       startDate,
       endDate,
-      status: 'BORRADOR',
-      nightHourStart: org.nightHourStart,
-      nightHourEnd: org.nightHourEnd,
-      nightSurchargePercent: org.nightSurchargePercent,
-      rulesSnapshot: {
-        halfDayRuleConfirmed: org.halfDayRuleConfirmed,
-        hourlyRateRuleConfirmed: org.hourlyRateRuleConfirmed,
-        nightHourStart: org.nightHourStart,
-        nightHourEnd: org.nightHourEnd,
-        nightSurchargePercent: org.nightSurchargePercent,
-        wageCalculationFormula: org.halfDayRuleConfirmed
-          ? 'Jornal base / 8 horas * horas + recargo'
-          : 'Pendiente de confirmación de reglas',
-      },
-      summaryData: {
-        totalEmployees: users.length,
-        totalDaysWorked,
-        totalHalfDays,
-        totalDayHours,
-        totalNightHours,
-        totalHours,
-        payrollStatus: org.halfDayRuleConfirmed ? 'APROBADO' : 'PENDIENTE_CONFIGURACION',
-      },
     });
 
-    return NextResponse.json({ success: true, closure });
-  } catch (error) {
-    console.error('Error en cierres:', error);
-    return NextResponse.json({ error: 'Error procesando el cierre de período.' }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      message: 'Borrador de cierre generado exitosamente para revisión.',
+      closure: draft,
+    });
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    console.error('Error gestionando cierre:', error);
+    return NextResponse.json({ error: 'Error procesando solicitud de cierre.' }, { status: 500 });
   }
 }

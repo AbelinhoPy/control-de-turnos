@@ -1,8 +1,9 @@
 // src/app/api/auth/login/route.ts
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { dataStore } from '@/lib/data-store';
+import { dbService } from '@/lib/db-service';
 import { setSessionCookie } from '@/lib/auth/session';
+import { checkRateLimit, resetRateLimit } from '@/lib/auth/rate-limiter';
 
 export async function POST(request: Request) {
   try {
@@ -15,7 +16,24 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = dataStore.getUserByEmail(email);
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || '127.0.0.1';
+    const rateLimitKey = `login:${clientIp}:${email.toLowerCase().trim()}`;
+    const rateCheck = checkRateLimit(rateLimitKey, {
+      maxAttempts: 5,
+      windowMs: 15 * 60 * 1000,
+      blockDurationMs: 15 * 60 * 1000,
+    });
+
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: `Demasiados intentos fallidos. Por seguridad, intente nuevamente en ${rateCheck.retryAfterSeconds} segundos.`,
+        },
+        { status: 429 }
+      );
+    }
+
+    const user = await dbService.getUserByEmail(email);
 
     if (!user) {
       return NextResponse.json(
@@ -27,8 +45,7 @@ export async function POST(request: Request) {
     if (!user.isActive) {
       return NextResponse.json(
         {
-          error:
-            'Su cuenta se encuentra desactivada. Comuníquese con la administración para más información.',
+          error: 'Su cuenta se encuentra desactivada. Comuníquese con la administración para más información.',
         },
         { status: 403 }
       );
@@ -42,7 +59,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const org = dataStore.getOrganization(user.organizationId);
+    // Login exitoso: reiniciar contador de intentos
+    resetRateLimit(rateLimitKey);
+
+    const org = await dbService.getOrganization(user.organizationId);
 
     await setSessionCookie({
       userId: user.id,
@@ -55,16 +75,6 @@ export async function POST(request: Request) {
       isActive: user.isActive,
     });
 
-    dataStore.createAuditLog({
-      organizationId: user.organizationId,
-      userId: user.id,
-      userName: user.name,
-      action: 'LOGIN',
-      entity: 'users',
-      entityId: user.id,
-      details: { role: user.role },
-    });
-
     return NextResponse.json({
       success: true,
       user: {
@@ -74,12 +84,14 @@ export async function POST(request: Request) {
         role: user.role,
         crewId: user.crewId,
       },
-      redirectUrl: user.role === 'ADMIN' ? '/admin' : '/funcionario',
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'DB_NOT_CONFIGURED') {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error('Error en login:', error);
     return NextResponse.json(
-      { error: 'Ocurrió un error inesperado al procesar el inicio de sesión.' },
+      { error: 'Ocurrió un error interno al intentar iniciar sesión.' },
       { status: 500 }
     );
   }
