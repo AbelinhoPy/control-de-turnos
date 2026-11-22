@@ -28,19 +28,19 @@ async function runTestSuite() {
   // 1. PRUEBA DE GEOFENCING Y TOLERANCIA GPS
   // -----------------------------------------------------------------
   console.log('📍 1. Pruebas de Geofencing y Precisión GPS:');
-  const workplace = { latitude: -25.2867, longitude: -57.647 };
+  const workplace = { latitude: -25.496469, longitude: -54.789641 };
   const radiusMeters = 300;
 
   // Caso 1.1: Usuario dentro del radio con buena señal
-  const insideCoord = { latitude: -25.2868, longitude: -57.6471 }; // ~15 metros
+  const insideCoord = { latitude: -25.49648, longitude: -54.78965 }; // ~15 metros
   const resInside = validateGeofence(insideCoord, 15, {
     center: workplace,
     radiusMeters,
   });
   assert(resInside.isValid === true, 'Ubicación dentro del radio (300m) es aceptada');
 
-  // Caso 1.2: Usuario fuera del área (ej: a 2 km)
-  const outsideCoord = { latitude: -25.31, longitude: -57.647 }; // ~2.5 km
+  // Caso 1.2: Usuario fuera del área (ej: a ~2.4 km)
+  const outsideCoord = { latitude: -25.518, longitude: -54.7896 }; // ~2.4 km
   const resOutside = validateGeofence(outsideCoord, 15, {
     center: workplace,
     radiusMeters,
@@ -52,7 +52,7 @@ async function runTestSuite() {
   );
 
   // Caso 1.3: Baja precisión del GPS (>120m)
-  const lowAccuracyCoord = { latitude: -25.2867, longitude: -57.647 };
+  const lowAccuracyCoord = { latitude: -25.496469, longitude: -54.789641 };
   const resLowAcc = validateGeofence(lowAccuracyCoord, 250, {
     center: workplace,
     radiusMeters,
@@ -106,8 +106,8 @@ async function runTestSuite() {
     organizationId: 'org_mepy_2026',
     date: '2026-11-20',
     timestamp: new Date('2026-11-20T13:58:00-03:00'),
-    lat: -25.2867,
-    lng: -57.647,
+    lat: -25.496469,
+    lng: -54.789641,
     accuracy: 10,
     distanceMeters: 5,
     status: 'VALID',
@@ -119,8 +119,8 @@ async function runTestSuite() {
     organizationId: 'org_mepy_2026',
     date: '2026-11-20',
     timestamp: new Date('2026-11-20T13:58:01-03:00'),
-    lat: -25.2867,
-    lng: -57.647,
+    lat: -25.496469,
+    lng: -54.789641,
     accuracy: 10,
     distanceMeters: 5,
     status: 'VALID',

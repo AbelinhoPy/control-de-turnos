@@ -19,9 +19,9 @@ export default function ConfigPage() {
   const [feedback, setFeedback] = useState<string | null>(null);
 
   // Form fields
-  const [workplaceName, setWorkplaceName] = useState('Sede Central - Asunción');
-  const [workplaceLat, setWorkplaceLat] = useState(-25.2867);
-  const [workplaceLng, setWorkplaceLng] = useState(-57.647);
+  const [workplaceName, setWorkplaceName] = useState('Sede Operativa - Minga Guazú');
+  const [workplaceLat, setWorkplaceLat] = useState(-25.496469);
+  const [workplaceLng, setWorkplaceLng] = useState(-54.789641);
   const [geofenceRadiusMeters, setGeofenceRadiusMeters] = useState(300);
   const [nightHourStart, setNightHourStart] = useState('20:00');
   const [nightHourEnd, setNightHourEnd] = useState('06:00');
@@ -35,9 +35,9 @@ export default function ConfigPage() {
       .then((d) => {
         if (d.organization) {
           const org = d.organization;
-          setWorkplaceName(org.workplaceName || '');
-          setWorkplaceLat(org.workplaceLat || -25.2867);
-          setWorkplaceLng(org.workplaceLng || -57.647);
+          setWorkplaceName(org.workplaceName || 'Sede Operativa - Minga Guazú');
+          setWorkplaceLat(org.workplaceLat || -25.496469);
+          setWorkplaceLng(org.workplaceLng || -54.789641);
           setGeofenceRadiusMeters(org.geofenceRadiusMeters || 300);
           setNightHourStart(org.nightHourStart || '20:00');
           setNightHourEnd(org.nightHourEnd || '06:00');

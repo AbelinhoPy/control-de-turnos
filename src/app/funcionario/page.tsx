@@ -431,25 +431,25 @@ export default function FuncionarioMobilePage() {
         <div className="grid grid-cols-1 gap-1.5 text-xs">
           <button
             type="button"
-            onClick={() => sendAttendanceCoordinates(-25.28675, -57.64705, 15)}
+            onClick={() => sendAttendanceCoordinates(-25.49648, -54.78965, 15)}
             className="w-full text-left p-2 rounded-xl bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-800 font-semibold transition flex items-center justify-between"
           >
-            <span>1. Simular GPS en Sede Central (Dentro de radio, ±15m)</span>
+            <span>1. Simular GPS en Sede Operativa (Dentro de radio, ±15m)</span>
             <span className="text-[10px] font-bold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-800">Válido</span>
           </button>
 
           <button
             type="button"
-            onClick={() => sendAttendanceCoordinates(-25.31000, -57.64700, 15)}
+            onClick={() => sendAttendanceCoordinates(-25.51800, -54.78960, 15)}
             className="w-full text-left p-2 rounded-xl bg-white border border-rose-200 hover:bg-rose-50 text-rose-800 font-semibold transition flex items-center justify-between"
           >
-            <span>2. Simular GPS Fuera de Sede (a 2.5 km de distancia)</span>
+            <span>2. Simular GPS Fuera de Sede (a ~2.4 km de distancia)</span>
             <span className="text-[10px] font-bold bg-rose-100 px-1.5 py-0.5 rounded text-rose-800">Rechazo</span>
           </button>
 
           <button
             type="button"
-            onClick={() => sendAttendanceCoordinates(-25.28670, -57.64700, 250)}
+            onClick={() => sendAttendanceCoordinates(-25.49647, -54.78964, 250)}
             className="w-full text-left p-2 rounded-xl bg-white border border-amber-200 hover:bg-amber-50 text-amber-800 font-semibold transition flex items-center justify-between"
           >
             <span>3. Simular Baja Precisión de Señal (±250m)</span>
