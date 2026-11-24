@@ -696,111 +696,210 @@ export async function generateIncidentsExcel(params: {
 export async function generateClosureExcel(params: {
   orgId: string;
   closureId?: string;
+  startDate?: string;
+  endDate?: string;
 }): Promise<Buffer> {
   const org = await dbService.getOrganization(params.orgId);
-  const closures = await dbService.listPeriodClosures(params.orgId);
-  const targetClosure = params.closureId
-    ? await dbService.getPeriodClosure(params.closureId)
-    : closures[0]
-    ? await dbService.getPeriodClosure(closures[0].id)
-    : null;
+  let targetClosure: any = null;
 
-  const wb = new ExcelJS.Workbook();
-
-  if (!targetClosure) {
-    const ws = wb.addWorksheet('Sin Cierres');
-    ws.getCell('A1').value = 'No se encontró ningún cierre de período.';
-    return Buffer.from(await wb.xlsx.writeBuffer());
+  if (params.closureId) {
+    const fetched = await dbService.getPeriodClosure(params.closureId);
+    if (fetched && fetched.organizationId === params.orgId) {
+      targetClosure = fetched;
+    }
   }
 
-  // Hoja 1: Resumen y Reglas Inmutables
-  const ws1 = wb.addWorksheet('Resumen de Cierre');
-  ws1.mergeCells('A1:F1');
-  ws1.getCell('A1').value = `CIERRE DE PERÍODO: ${targetClosure.name.toUpperCase()}`;
-  ws1.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-  ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4F5F' } };
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Control de Turnos 24/7';
+  wb.created = new Date();
 
-  ws1.getCell('A3').value = 'Estado del Cierre:';
-  ws1.getCell('B3').value = targetClosure.status;
-  ws1.getCell('A4').value = 'Rango de Fechas:';
-  ws1.getCell('B4').value = `${targetClosure.startDate} al ${targetClosure.endDate}`;
-  ws1.getCell('A5').value = 'Aprobado Por:';
-  ws1.getCell('B5').value = targetClosure.approvedByName || 'Pendiente de aprobación';
-  ws1.getCell('A6').value = 'Fecha Aprobación:';
-  ws1.getCell('B6').value = targetClosure.approvedAt || 'Borrador';
+  if (targetClosure) {
+    // Hoja 1: Resumen y Reglas Inmutables (Snapshot Congelado)
+    const ws1 = wb.addWorksheet('Resumen de Cierre');
+    ws1.mergeCells('A1:F1');
+    ws1.getCell('A1').value = `CIERRE DE PERÍODO: ${targetClosure.name.toUpperCase()} (CONGELADO)`;
+    ws1.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+    ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F4F5F' } };
 
-  ws1.getCell('A8').value = 'Reglas Aplicadas (Snapshot):';
-  ws1.getCell('A8').font = { bold: true };
-  ws1.getCell('A9').value = 'Franja Nocturna:';
-  ws1.getCell('B9').value = `${targetClosure.nightHourStart} a ${targetClosure.nightHourEnd} hs`;
-  ws1.getCell('A10').value = 'Recargo Nocturno:';
-  ws1.getCell('B10').value = `${targetClosure.nightSurchargePercent}%`;
+    ws1.getCell('A3').value = 'Estado del Cierre:';
+    ws1.getCell('B3').value = targetClosure.status === 'APROBADO' ? 'APROBADO (Inmutable)' : targetClosure.status;
+    ws1.getCell('A4').value = 'Rango de Fechas:';
+    ws1.getCell('B4').value = `${targetClosure.startDate} al ${targetClosure.endDate}`;
+    ws1.getCell('A5').value = 'Aprobado Por:';
+    ws1.getCell('B5').value = targetClosure.approvedByName || 'Pendiente de aprobación';
+    ws1.getCell('A6').value = 'Fecha Aprobación:';
+    ws1.getCell('B6').value = targetClosure.approvedAt || 'Borrador';
 
-  const sData = targetClosure.summaryData as any;
-  ws1.getCell('A12').value = 'Totales Consolidados:';
-  ws1.getCell('A12').font = { bold: true };
-  ws1.getCell('A13').value = 'Personal Activo:';
-  ws1.getCell('B13').value = sData?.totalEmployees || 0;
-  ws1.getCell('A14').value = 'Días Trabajados Totales:';
-  ws1.getCell('B14').value = sData?.totalDaysWorked || 0;
-  ws1.getCell('A15').value = 'Horas Diurnas Totales:';
-  ws1.getCell('B15').value = sData?.totalDayHours || 0;
-  ws1.getCell('A16').value = 'Horas Nocturnas Totales:';
-  ws1.getCell('B16').value = sData?.totalNightHours || 0;
-  ws1.getCell('A17').value = 'Total General Horas:';
-  ws1.getCell('B17').value = sData?.totalHours || 0;
+    ws1.getCell('A8').value = 'Reglas Aplicadas (Snapshot Inmutable):';
+    ws1.getCell('A8').font = { bold: true };
+    ws1.getCell('A9').value = 'Franja Nocturna:';
+    ws1.getCell('B9').value = `${targetClosure.nightHourStart} a ${targetClosure.nightHourEnd} hs`;
+    ws1.getCell('A10').value = 'Recargo Nocturno:';
+    ws1.getCell('B10').value = `${targetClosure.nightSurchargePercent}%`;
 
-  ws1.columns = [{ width: 28 }, { width: 32 }, { width: 14 }, { width: 14 }];
+    const sData = targetClosure.summaryData as any;
+    ws1.getCell('A12').value = 'Totales Consolidados:';
+    ws1.getCell('A12').font = { bold: true };
+    ws1.getCell('A13').value = 'Personal Activo:';
+    ws1.getCell('B13').value = sData?.totalEmployees || 0;
+    ws1.getCell('A14').value = 'Días Trabajados Totales:';
+    ws1.getCell('B14').value = sData?.totalDaysWorked || 0;
+    ws1.getCell('A15').value = 'Horas Diurnas Totales:';
+    ws1.getCell('B15').value = sData?.totalDayHours || 0;
+    ws1.getCell('A16').value = 'Horas Nocturnas Totales:';
+    ws1.getCell('B16').value = sData?.totalNightHours || 0;
+    ws1.getCell('A17').value = 'Total General Horas:';
+    ws1.getCell('B17').value = sData?.totalHours || 0;
 
-  // Hoja 2: Detalle por Jornada
-  const ws2 = wb.addWorksheet('Detalle de Jornadas');
-  const details = (targetClosure as any).detailsSnapshot || [];
+    ws1.columns = [{ width: 28 }, { width: 32 }, { width: 14 }, { width: 14 }];
 
-  const headers = ['Fecha', 'Funcionario', 'Cuadrilla', 'Turno', 'Días Trab.', 'Horas Diurnas', 'Horas Noct.', 'Total Horas', 'Jornal Base (Gs.)', 'Total Pagado (Gs.)'];
-  const hRow = ws2.getRow(1);
-  headers.forEach((h, idx) => {
-    const c = hRow.getCell(idx + 1);
-    c.value = h;
-    c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E7F94' } };
-  });
+    // Hoja 2: Detalle por Jornada desde el snapshot inmutable
+    const ws2 = wb.addWorksheet('Detalle de Jornadas (Snapshot)');
+    const details = (targetClosure as any).detailsSnapshot || [];
 
-  let dRow = 2;
-  details.forEach((item: any) => {
-    const r = ws2.getRow(dRow);
-    r.getCell(1).value = item.date;
-    r.getCell(2).value = item.userName;
-    r.getCell(3).value = item.crewId || '-';
-    r.getCell(4).value = item.shiftCode || 'M';
-    r.getCell(5).value = Number(item.workedDays);
-    r.getCell(6).value = Number(item.dayHours);
-    r.getCell(7).value = Number(item.nightHours);
-    r.getCell(8).value = Number(item.totalHours);
-    r.getCell(9).value = Number(item.baseDailyWage || 100000);
-    r.getCell(10).value = Number(item.totalPay || 0);
+    const headers = ['Fecha', 'Funcionario', 'Cuadrilla', 'Turno', 'Días Trab.', 'Horas Diurnas', 'Horas Noct.', 'Total Horas', 'Jornal Base (Gs.)', 'Total Pagado (Gs.)'];
+    const hRow = ws2.getRow(1);
+    headers.forEach((h, idx) => {
+      const c = hRow.getCell(idx + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E7F94' } };
+    });
 
-    r.getCell(5).numFmt = '0.0';
-    r.getCell(6).numFmt = '0.0';
-    r.getCell(7).numFmt = '0.0';
-    r.getCell(8).numFmt = '0.0';
-    r.getCell(9).numFmt = '#,##0';
-    r.getCell(10).numFmt = '#,##0';
+    let dRow = 2;
+    details.forEach((item: any) => {
+      const r = ws2.getRow(dRow);
+      r.getCell(1).value = item.date;
+      r.getCell(2).value = item.userName;
+      r.getCell(3).value = item.crewId || '-';
+      r.getCell(4).value = item.shiftCode || 'M';
+      r.getCell(5).value = Number(item.workedDays);
+      r.getCell(6).value = Number(item.dayHours);
+      r.getCell(7).value = Number(item.nightHours);
+      r.getCell(8).value = Number(item.totalHours);
+      r.getCell(9).value = Number(item.baseDailyWage || 100000);
+      r.getCell(10).value = Number(item.totalPay || 0);
 
-    dRow++;
-  });
+      r.getCell(5).numFmt = '0.0';
+      r.getCell(6).numFmt = '0.0';
+      r.getCell(7).numFmt = '0.0';
+      r.getCell(8).numFmt = '0.0';
+      r.getCell(9).numFmt = '#,##0';
+      r.getCell(10).numFmt = '#,##0';
 
-  ws2.columns = [
-    { width: 14 },
-    { width: 22 },
-    { width: 16 },
-    { width: 12 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 14 },
-    { width: 16 },
-    { width: 18 },
-  ];
+      dRow++;
+    });
+
+    ws2.columns = [
+      { width: 14 },
+      { width: 22 },
+      { width: 16 },
+      { width: 12 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 16 },
+      { width: 18 },
+    ];
+  } else {
+    // Si no se seleccionó un cierre específico, generar como BORRADOR NO CERRADO POR RANGO
+    const sDate = params.startDate || '2026-11-01';
+    const eDate = params.endDate || '2026-11-15';
+
+    const attendances = await dbService.listAttendances(params.orgId, {
+      startDate: sDate,
+      endDate: eDate,
+    });
+    const users = await dbService.listUsers(params.orgId, true);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    let totalDaysWorked = 0;
+    let totalDayHours = 0;
+    let totalNightHours = 0;
+    let totalHours = 0;
+
+    attendances.forEach((a) => {
+      totalDaysWorked += a.workedDays;
+      totalDayHours += a.dayHours;
+      totalNightHours += a.nightHours;
+      totalHours += a.totalHours;
+    });
+
+    // Hoja 1: Resumen de Borrador de Rango
+    const ws1 = wb.addWorksheet('Borrador de Liquidación');
+    ws1.mergeCells('A1:F1');
+    ws1.getCell('A1').value = `BORRADOR DE LIQUIDACIÓN DE RANGO (NO CERRADO)`;
+    ws1.getCell('A1').font = { size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+    ws1.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB45309' } }; // Amber-700
+
+    ws1.getCell('A3').value = 'Estado del Documento:';
+    ws1.getCell('B3').value = 'BORRADOR NO CERRADO (Valores preliminares en vivo)';
+    ws1.getCell('B3').font = { bold: true, color: { argb: 'FFB45309' } };
+    ws1.getCell('A4').value = 'Rango Consultado:';
+    ws1.getCell('B4').value = `${sDate} al ${eDate}`;
+    ws1.getCell('A5').value = 'Advertencia:';
+    ws1.getCell('B5').value = 'Este archivo no corresponde a un cierre aprobado. No es un snapshot congelado.';
+
+    ws1.getCell('A7').value = 'Totales Preliminares del Rango:';
+    ws1.getCell('A7').font = { bold: true };
+    ws1.getCell('A8').value = 'Funcionarios con Jornada:';
+    ws1.getCell('B8').value = new Set(attendances.map((a) => a.userId)).size;
+    ws1.getCell('A9').value = 'Días Trabajados Totales:';
+    ws1.getCell('B9').value = totalDaysWorked;
+    ws1.getCell('A10').value = 'Horas Diurnas Totales:';
+    ws1.getCell('B10').value = totalDayHours;
+    ws1.getCell('A11').value = 'Horas Nocturnas Totales:';
+    ws1.getCell('B11').value = totalNightHours;
+    ws1.getCell('A12').value = 'Total General Horas:';
+    ws1.getCell('B12').value = totalHours;
+
+    ws1.columns = [{ width: 28 }, { width: 40 }, { width: 14 }, { width: 14 }];
+
+    // Hoja 2: Detalle de Jornadas (Borrador)
+    const ws2 = wb.addWorksheet('Detalle Jornadas (Borrador)');
+    const headers = ['Fecha', 'Funcionario', 'Días Trab.', 'Horas Diurnas', 'Horas Noct.', 'Total Horas', 'Jornal Base (Gs.)', 'Estado'];
+    const hRow = ws2.getRow(1);
+    headers.forEach((h, idx) => {
+      const c = hRow.getCell(idx + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB45309' } };
+    });
+
+    let dRow = 2;
+    attendances.forEach((item) => {
+      const user = userMap.get(item.userId);
+      const r = ws2.getRow(dRow);
+      r.getCell(1).value = item.date;
+      r.getCell(2).value = user?.name || 'Funcionario';
+      r.getCell(3).value = Number(item.workedDays);
+      r.getCell(4).value = Number(item.dayHours);
+      r.getCell(5).value = Number(item.nightHours);
+      r.getCell(6).value = Number(item.totalHours);
+      r.getCell(7).value = Number(user?.baseDailyWage || 100000);
+      r.getCell(8).value = item.status;
+
+      r.getCell(3).numFmt = '0.0';
+      r.getCell(4).numFmt = '0.0';
+      r.getCell(5).numFmt = '0.0';
+      r.getCell(6).numFmt = '0.0';
+      r.getCell(7).numFmt = '#,##0';
+
+      dRow++;
+    });
+
+    ws2.columns = [
+      { width: 14 },
+      { width: 24 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 16 },
+      { width: 14 },
+    ];
+  }
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

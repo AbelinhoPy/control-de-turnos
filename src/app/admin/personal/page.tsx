@@ -52,6 +52,8 @@ export default function StaffManagementPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteCrewId, setInviteCrewId] = useState('');
   const [inviteLinkGenerated, setInviteLinkGenerated] = useState<string | null>(null);
+  const [emailDeliveryStatus, setEmailDeliveryStatus] = useState<{ sent: boolean; message?: string } | null>(null);
+  const [resendingInvite, setResendingInvite] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Edit states
@@ -94,12 +96,41 @@ export default function StaffManagementPage() {
       const data = await res.json();
       if (res.ok) {
         setInviteLinkGenerated(data.inviteUrl);
+        setEmailDeliveryStatus({
+          sent: data.emailSent ?? true,
+          message: data.emailError,
+        });
         loadStaff();
       } else {
         alert(data.error || 'Error al invitar funcionario.');
       }
     } catch {
       alert('Error de conexión.');
+    }
+  };
+
+  const handleResendCurrentInvite = async () => {
+    if (!inviteLinkGenerated) return;
+    setResendingInvite(true);
+    try {
+      const url = new URL(inviteLinkGenerated);
+      const token = url.searchParams.get('token');
+      const res = await fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'RESEND_INVITATION', token }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setEmailDeliveryStatus({ sent: true });
+        alert('Correo de invitación enviado exitosamente.');
+      } else {
+        alert(data.error || 'No se pudo enviar el correo.');
+      }
+    } catch {
+      alert('Error de conexión al reintentar.');
+    } finally {
+      setResendingInvite(false);
     }
   };
 
@@ -369,6 +400,26 @@ export default function StaffManagementPage() {
                   <p className="font-bold">¡Invitación creada con éxito!</p>
                   <p className="mt-1">Compartí este enlace de activación con el funcionario:</p>
                 </div>
+
+                {emailDeliveryStatus && !emailDeliveryStatus.sent && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1.5">
+                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      Aviso de entrega de correo
+                    </p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      {emailDeliveryStatus.message || 'El proveedor no pudo enviar el correo automático (falta RESEND_API_KEY o error del servicio).'}
+                    </p>
+                    <button
+                      type="button"
+                      disabled={resendingInvite}
+                      onClick={handleResendCurrentInvite}
+                      className="mt-1 px-3 py-1.5 rounded-lg bg-amber-700 text-white font-semibold hover:bg-amber-800 transition disabled:opacity-50 text-xs inline-flex items-center gap-1.5"
+                    >
+                      {resendingInvite ? 'Reintentando...' : 'Reintentar envío de correo'}
+                    </button>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2">
                   <input

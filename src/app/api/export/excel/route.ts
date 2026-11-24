@@ -89,8 +89,12 @@ export async function GET(request: Request) {
         buffer = await generateClosureExcel({
           orgId: session.organizationId,
           closureId,
+          startDate,
+          endDate,
         });
-        filename = `Cierre_Periodo_${closureId || startDate}.xlsx`;
+        filename = closureId
+          ? `Cierre_Periodo_${closureId}.xlsx`
+          : `Borrador_Cierre_${startDate}_al_${endDate}.xlsx`;
         break;
 
       case 'planning':

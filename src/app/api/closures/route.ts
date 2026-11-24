@@ -15,8 +15,8 @@ export async function GET(request: Request) {
 
     if (closureId) {
       const closure = await dbService.getPeriodClosure(closureId);
-      if (!closure) {
-        return NextResponse.json({ error: 'Cierre no encontrado' }, { status: 404 });
+      if (!closure || closure.organizationId !== session.organizationId) {
+        return NextResponse.json({ error: 'Cierre no encontrado o no pertenece a su organización.' }, { status: 404 });
       }
       return NextResponse.json({ closure });
     }
@@ -45,6 +45,11 @@ export async function POST(request: Request) {
     if (action === 'APPROVE') {
       if (!closureId) {
         return NextResponse.json({ error: 'ID de cierre requerido' }, { status: 400 });
+      }
+
+      const existingClosure = await dbService.getPeriodClosure(closureId);
+      if (!existingClosure || existingClosure.organizationId !== session.organizationId) {
+        return NextResponse.json({ error: 'Cierre no encontrado o no pertenece a su organización.' }, { status: 404 });
       }
 
       const approved = await dbService.approvePeriodClosure(closureId, session.userId, session.name);

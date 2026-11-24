@@ -1,9 +1,15 @@
-// src/app/api/auth/login/route.ts
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { dbService } from '@/lib/db-service';
 import { setSessionCookie } from '@/lib/auth/session';
 import { checkRateLimit, resetRateLimit } from '@/lib/auth/rate-limiter';
+import { isDemoModeEnabled } from '@/db';
+
+export async function GET() {
+  return NextResponse.json({
+    isDemoMode: isDemoModeEnabled(),
+  });
+}
 
 export async function POST(request: Request) {
   try {

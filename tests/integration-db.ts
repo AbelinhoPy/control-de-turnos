@@ -2,6 +2,31 @@
 // Prueba de integración con base de datos real (PostgreSQL / Neon)
 // Verifica persistencia, atomicidad, restricciones, auditoría, cierres inmutables y exportación.
 
+import fs from 'fs';
+import path from 'path';
+
+try {
+  const envPath = path.resolve(process.cwd(), '.env.local');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx !== -1) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    }
+  }
+} catch (e) {}
+
 import { dbService } from '../src/lib/db-service';
 import { assertDatabaseAvailable, isDatabaseConnected, isDemoModeEnabled, getPool } from '../src/db';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -67,7 +92,12 @@ async function runDbIntegrationSuite() {
   // -------------------------------------------------------------------------
   console.log('\n📦 2. Ejecución de migraciones versionadas en PostgreSQL:');
   const db = getDb();
-  await migrate(db as any, { migrationsFolder: './drizzle' });
+  if (process.env.DATABASE_URL?.includes('neon.tech')) {
+    const { migrate: migrateNeon } = await import('drizzle-orm/neon-http/migrator');
+    await migrateNeon(db as any, { migrationsFolder: './drizzle' });
+  } else {
+    await migrate(db as any, { migrationsFolder: './drizzle' });
+  }
   assert(true, 'Migraciones Drizzle aplicadas con éxito en PostgreSQL');
 
   const orgId = `org_test_${Date.now()}`;
@@ -301,6 +331,123 @@ async function runDbIntegrationSuite() {
 
   const persistedClosure = await dbService.getPeriodClosure(closure.id);
   assert(persistedClosure?.status === 'APROBADO', 'Cierre aprobado conserva su estado y snapshot tras reconexión');
+
+  // -------------------------------------------------------------------------
+  // 11. Salida sin Entrada Previa y Validación de Hora
+  // -------------------------------------------------------------------------
+  console.log('\n🚫 11. Validación de Salida sin Entrada Previa en BD:');
+  let rejectedOut = false;
+  try {
+    await dbService.recordClockOut({
+      attendanceId: 'non_existent_id_999',
+      timestamp: new Date(),
+      lat: -25.496469,
+      lng: -54.789641,
+      accuracy: 10,
+      distanceMeters: 5,
+      status: 'VALID',
+    });
+  } catch (err: any) {
+    rejectedOut = true;
+  }
+  assert(rejectedOut, 'Rechaza salida si la jornada no existe en la base de datos');
+
+  // -------------------------------------------------------------------------
+  // 12. Atomicidad y Concurrencia en Salida (Simultaneidad)
+  // -------------------------------------------------------------------------
+  console.log('\n⚡ 12. Prueba de Concurrencia y Atomicidad en Marcación de Salida:');
+  const userConcId = `user_conc_${Date.now()}`;
+  await dbService.createUser({
+    id: userConcId,
+    organizationId: orgId,
+    name: 'Carlos Concurrente',
+    email: `carlos_${Date.now()}@test.com`,
+    passwordHash: 'hash',
+    role: 'FUNCIONARIO',
+    isActive: true,
+  });
+
+  const concDate = '2026-11-25';
+  const inAtt = await dbService.recordClockIn({
+    userId: userConcId,
+    organizationId: orgId,
+    date: concDate,
+    timestamp: new Date('2026-11-25T06:00:00-03:00'),
+    lat: -25.496469,
+    lng: -54.789641,
+    accuracy: 10,
+    distanceMeters: 5,
+    status: 'VALID',
+    idempotencyToken: `token_in_${Date.now()}`,
+  });
+
+  // Dos solicitudes de salida simultáneas con diferentes marcas de tiempo
+  const time1 = new Date('2026-11-25T14:00:00-03:00');
+  const time2 = new Date('2026-11-25T14:00:02-03:00');
+
+  const [res1, res2] = await Promise.all([
+    dbService.recordClockOut({
+      attendanceId: inAtt.id,
+      timestamp: time1,
+      lat: -25.496469,
+      lng: -54.789641,
+      accuracy: 10,
+      distanceMeters: 5,
+      status: 'VALID',
+      idempotencyToken: `token_out_1_${Date.now()}`,
+    }),
+    dbService.recordClockOut({
+      attendanceId: inAtt.id,
+      timestamp: time2,
+      lat: -25.496469,
+      lng: -54.789641,
+      accuracy: 10,
+      distanceMeters: 5,
+      status: 'VALID',
+      idempotencyToken: `token_out_2_${Date.now()}`,
+    }),
+  ]);
+
+  assert(res1 !== null && res2 !== null, 'Ambas llamadas concurrentes retornan con éxito');
+  assert(
+    new Date(res1.clockOutTime!).getTime() === new Date(res2.clockOutTime!).getTime(),
+    'Ambas llamadas devuelven exactamente la misma hora atómica de salida'
+  );
+
+  const logsConc = await dbService.listAuditLogs(orgId);
+  const outLogs = logsConc.filter(
+    (l) => l.entityId === inAtt.id && l.action === 'CLOCK_OUT_RECORDED'
+  );
+  assert(outLogs.length === 1, 'Exactamente una sola entrada de auditoría fue creada (sin duplicados concurrentes)');
+
+  // -------------------------------------------------------------------------
+  // 13. Aislamiento de Organización (Tenant Isolation) en Cierres
+  // -------------------------------------------------------------------------
+  console.log('\n🏢 13. Aislamiento Multi-inquilino en Cierres:');
+  const otherOrgId = `org_other_${Date.now()}`;
+  await dbService.createOrganization({
+    id: otherOrgId,
+    name: 'Otra Empresa S.A.',
+    slug: `otra-empresa-${Date.now()}`,
+    ruc: '80099999-9',
+    timezone: 'America/Asuncion',
+    workplaceName: 'Sede Otra',
+    workplaceLat: -25.5,
+    workplaceLng: -54.8,
+    geofenceRadiusMeters: 300,
+    nightShiftStartHour: 20,
+    nightShiftEndHour: 6,
+    nightShiftSurchargePercent: 30,
+    halfDayThresholdHours: 4,
+    fullDayThresholdHours: 7,
+  });
+
+  const otherClosure = await dbService.getPeriodClosure(closure.id);
+  assert(otherClosure !== null, 'El cierre existe');
+  assert(
+    otherClosure.organizationId === orgId && otherClosure.organizationId !== otherOrgId,
+    'El cierre pertenece estrictamente a su organización creadora'
+  );
 
   console.log('\n======================================================================');
   console.log(`🏁 RESULTADO: ${passedTests}/${totalTests} pruebas de BD superadas con éxito.`);

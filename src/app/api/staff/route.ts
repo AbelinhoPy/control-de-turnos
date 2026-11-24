@@ -16,8 +16,9 @@ export async function GET(request: Request) {
 
     const staff = await dbService.listUsers(session.organizationId, includeDeactivated);
     const crews = await dbService.listCrews(session.organizationId);
+    const invitations = await dbService.listInvitations(session.organizationId);
 
-    return NextResponse.json({ staff, crews });
+    return NextResponse.json({ staff, crews, invitations });
   } catch (error: any) {
     if (error?.code === 'DB_NOT_CONFIGURED') {
       return NextResponse.json({ error: error.message }, { status: 503 });
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { action, userId, name, email, crewId, baseDailyWage, phone, documentNumber } = body;
+    const { action, userId, name, email, crewId, baseDailyWage, phone, documentNumber, invitationId, token: inputToken } = body;
 
     // 1. Invitar nuevo funcionario
     if (action === 'INVITE') {
@@ -59,14 +60,54 @@ export async function POST(request: Request) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const inviteUrl = `${appUrl}/invitacion?token=${invitation.token}`;
 
-      // Enviar correo de invitación
-      await sendInvitationEmail(email, inviteUrl, name, session.name);
+      // Enviar correo de invitación comprobando el resultado real
+      const emailResult = await sendInvitationEmail(email, inviteUrl, name, session.name);
+
+      const message = emailResult.success
+        ? 'Invitación generada y enviada exitosamente al correo del funcionario.'
+        : 'Invitación creada, pero el proveedor no pudo entregar el correo automático. Puede compartir el enlace manualmente o reintentar el envío.';
 
       return NextResponse.json({
         success: true,
-        message: 'Invitación generada y enviada exitosamente al correo del funcionario.',
+        emailSent: emailResult.success,
+        emailError: !emailResult.success
+          ? emailResult.error || (emailResult.reason === 'PROVIDER_NOT_CONFIGURED' ? 'Proveedor de correo no configurado (falta RESEND_API_KEY).' : 'Error del proveedor de correo.')
+          : undefined,
+        message,
         invitation,
         inviteUrl, // Se provee al admin en la UI como respaldo
+      });
+    }
+
+    // 1.1 Reintentar envío de correo de invitación
+    if (action === 'RESEND_INVITATION') {
+      let invitation = null;
+      if (inputToken) {
+        invitation = await dbService.getInvitationByToken(inputToken);
+      } else if (invitationId) {
+        invitation = await dbService.getInvitationById(invitationId);
+      }
+
+      if (!invitation || invitation.acceptedAt || new Date() > invitation.expiresAt) {
+        return NextResponse.json({ error: 'La invitación no existe, ya fue aceptada o ha expirado.' }, { status: 400 });
+      }
+
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const inviteUrl = `${appUrl}/invitacion?token=${invitation.token}`;
+      const emailResult = await sendInvitationEmail(invitation.email, inviteUrl, invitation.name, session.name);
+
+      if (!emailResult.success) {
+        return NextResponse.json({
+          success: false,
+          error: emailResult.error || 'No se pudo entregar el correo electrónico mediante el proveedor.',
+          inviteUrl,
+        }, { status: 502 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Correo de invitación reenviado exitosamente.',
+        inviteUrl,
       });
     }
 

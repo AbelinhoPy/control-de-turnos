@@ -18,7 +18,11 @@ export function isDatabaseConnected(): boolean {
 }
 
 export function isDemoModeEnabled(): boolean {
-  return process.env.ENABLE_DEMO_MODE === 'true' || process.env.NEXT_PUBLIC_ENABLE_DEMO === 'true';
+  return (
+    process.env.ENABLE_DEMO_MODE === 'true' ||
+    process.env.NEXT_PUBLIC_ENABLE_DEMO === 'true' ||
+    process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === 'true'
+  );
 }
 
 export function assertDatabaseAvailable() {

@@ -32,11 +32,13 @@ export async function POST(request: Request) {
 
       const resetData = await dbService.createPasswordReset(email);
 
-      // Si el correo existe y está activo, enviamos el correo electrónico de forma segura
       if (resetData) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
         const resetUrl = `${appUrl}/recuperar?token=${resetData.token}`;
-        await sendPasswordResetEmail(email, resetUrl, resetData.userName);
+        const emailResult = await sendPasswordResetEmail(email, resetUrl, resetData.userName);
+        if (!emailResult.success) {
+          console.warn(`[PasswordReset] No se pudo entregar correo de recuperación: ${emailResult.reason || 'ERROR'}`);
+        }
       }
 
       // NUNCA devolvemos el enlace en la respuesta HTTP para evitar exposición de seguridad

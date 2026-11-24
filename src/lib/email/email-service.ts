@@ -1,5 +1,5 @@
 // src/lib/email/email-service.ts
-// Servicio de correo transaccional para invitaciones y recuperación de contraseñas
+// Servicio de correo transaccional sanitizado para invitaciones y recuperación de contraseñas
 
 export interface SendEmailOptions {
   to: string;
@@ -8,7 +8,21 @@ export interface SendEmailOptions {
   text?: string;
 }
 
-export async function sendTransactionalEmail(options: SendEmailOptions): Promise<{ success: boolean; id?: string }> {
+export interface SendEmailResult {
+  success: boolean;
+  id?: string;
+  reason?: 'PROVIDER_NOT_CONFIGURED' | 'SEND_FAILED';
+  error?: string;
+}
+
+export function maskEmail(email: string): string {
+  if (!email || !email.includes('@')) return '***';
+  const [user, domain] = email.split('@');
+  if (user.length <= 2) return `${user[0]}***@${domain}`;
+  return `${user.slice(0, 2)}***@${domain}`;
+}
+
+export async function sendTransactionalEmail(options: SendEmailOptions): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.EMAIL_FROM || 'Control de Turnos <notificaciones@empresa.com.py>';
 
@@ -31,33 +45,60 @@ export async function sendTransactionalEmail(options: SendEmailOptions): Promise
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        console.error('❌ Error enviando correo vía Resend:', errorData);
-        return { success: false };
+        console.warn(`[EmailService] Error de proveedor (${res.status}) para ${maskEmail(options.to)}`);
+        return {
+          success: false,
+          reason: 'SEND_FAILED',
+          error: errorData?.message || `Error del proveedor de correo (HTTP ${res.status})`,
+        };
       }
 
       const data = await res.json();
-      return { success: true, id: data.id };
-    } catch (err) {
-      console.error('❌ Excepción enviando correo:', err);
-      return { success: false };
+      console.info(`[EmailService] Correo enviado exitosamente a ${maskEmail(options.to)} | ID: ${data?.id}`);
+      return { success: true, id: data?.id };
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[EmailService] Excepción de conexión para ${maskEmail(options.to)}: ${errMsg}`);
+      return {
+        success: false,
+        reason: 'SEND_FAILED',
+        error: 'Fallo de conexión al enviar correo transaccional.',
+      };
     }
   }
 
-  // Modo desarrollo / demo / sin clave de correo
-  console.log(`\n📨 [SIMULADOR DE CORREO TRANSACCIONAL]`);
-  console.log(`Para: ${options.to}`);
-  console.log(`Asunto: ${options.subject}`);
-  console.log(`Contenido:\n${options.text || options.html}`);
-  console.log(`-------------------------------------------------\n`);
+  // Si no hay API key configurada:
+  // Permitir simulación únicamente en modo de desarrollo local o demo explícita
+  const isDevOrDemo =
+    process.env.NODE_ENV === 'development' ||
+    process.env.ENABLE_DEMO_MODE === 'true';
 
-  return { success: true, id: `mock_${Date.now()}` };
+  if (isDevOrDemo) {
+    console.info(
+      `[EmailService DEV] Correo simulado para ${maskEmail(options.to)} | Asunto: "${options.subject}"`
+    );
+    return { success: true, id: `mock_${Date.now()}` };
+  }
+
+  console.warn(
+    `[EmailService] Intento de envío a ${maskEmail(options.to)} sin proveedor configurado (RESEND_API_KEY faltante)`
+  );
+  return {
+    success: false,
+    reason: 'PROVIDER_NOT_CONFIGURED',
+    error: 'Proveedor de correo no configurado (falta RESEND_API_KEY).',
+  };
 }
 
-export async function sendPasswordResetEmail(email: string, resetUrl: string, userName: string): Promise<boolean> {
+export async function sendPasswordResetEmail(
+  email: string,
+  resetUrl: string,
+  userName: string
+): Promise<SendEmailResult> {
   const subject = 'Restablecimiento de contraseña - Control de Turnos';
   const text = `Hola ${userName},\n\nHas solicitado restablecer tu contraseña para ingresar a Control de Turnos.\nAccede al siguiente enlace para crear tu nueva contraseña (válido por 1 hora):\n\n${resetUrl}\n\nSi no realizaste esta solicitud, puedes ignorar este mensaje.\n`;
   const html = `
-    <div style="font-family: sans-serif; max-width: 550px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; rounded: 8px;">
+    <div style="font-family: sans-serif; max-width: 550px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
       <h2 style="color: #0F4F5F; margin-top: 0;">Control de Turnos 24/7</h2>
       <p>Hola <strong>${userName}</strong>,</p>
       <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta.</p>
@@ -71,15 +112,19 @@ export async function sendPasswordResetEmail(email: string, resetUrl: string, us
     </div>
   `;
 
-  const result = await sendTransactionalEmail({ to: email, subject, text, html });
-  return result.success;
+  return sendTransactionalEmail({ to: email, subject, text, html });
 }
 
-export async function sendInvitationEmail(email: string, inviteUrl: string, userName: string, inviterName: string): Promise<boolean> {
+export async function sendInvitationEmail(
+  email: string,
+  inviteUrl: string,
+  userName: string,
+  inviterName: string
+): Promise<SendEmailResult> {
   const subject = 'Invitación para unirte a Control de Turnos';
   const text = `Hola ${userName},\n\n${inviterName} te ha invitado a formar parte de Control de Turnos.\nAccede al siguiente enlace para activar tu cuenta y configurar tu contraseña:\n\n${inviteUrl}\n`;
   const html = `
-    <div style="font-family: sans-serif; max-width: 550px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; rounded: 8px;">
+    <div style="font-family: sans-serif; max-width: 550px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
       <h2 style="color: #0F4F5F; margin-top: 0;">Control de Turnos 24/7</h2>
       <p>Hola <strong>${userName}</strong>,</p>
       <p><strong>${inviterName}</strong> te ha invitado a unirte a la plataforma para el registro de turnos y asistencias.</p>
@@ -92,6 +137,5 @@ export async function sendInvitationEmail(email: string, inviteUrl: string, user
     </div>
   `;
 
-  const result = await sendTransactionalEmail({ to: email, subject, text, html });
-  return result.success;
+  return sendTransactionalEmail({ to: email, subject, text, html });
 }

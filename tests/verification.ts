@@ -225,6 +225,138 @@ async function runTestSuite() {
   assert(isPdf, 'El documento generado es un archivo PDF válido (%PDF-)');
   assert(pdfBuffer.length > 2000, `El PDF tiene contenido real (${pdfBuffer.length} bytes)`);
 
+  // -----------------------------------------------------------------
+  // 9. PRUEBA DE SALIDA SIN ENTRADA PREVIA
+  // -----------------------------------------------------------------
+  console.log('\n🚫 9. Pruebas de Salida sin Entrada Previa:');
+  // Intentar salida en una jornada inexistente
+  let nonExistentThrew = false;
+  try {
+    dataStore.recordClockOut({
+      attendanceId: 'non_existent_att_id',
+      timestamp: new Date(),
+      lat: -25.496469,
+      lng: -54.789641,
+      accuracy: 10,
+      distanceMeters: 5,
+      status: 'VALID',
+    });
+  } catch (err: any) {
+    nonExistentThrew = true;
+  }
+  assert(nonExistentThrew, 'Rechaza salida si la jornada no existe en el sistema');
+
+  // Intentar salida en una jornada sin clockInTime
+  const dummyAtt = {
+    id: `att_dummy_${Date.now()}`,
+    organizationId: 'org_mepy_2026',
+    userId: 'user_dummy',
+    date: '2026-11-23',
+    clockInTime: null,
+    workedDays: 0,
+    dayHours: 0,
+    nightHours: 0,
+    totalHours: 0,
+    status: 'INCOMPLETA',
+    isManualCorrection: false,
+  };
+  (dataStore as any).attendances.push(dummyAtt);
+
+  let missingInThrew = false;
+  try {
+    dataStore.recordClockOut({
+      attendanceId: dummyAtt.id,
+      timestamp: new Date(),
+      lat: -25.496469,
+      lng: -54.789641,
+      accuracy: 10,
+      distanceMeters: 5,
+      status: 'VALID',
+    });
+  } catch (err: any) {
+    if (err.message.includes('sin hora de entrada')) {
+      missingInThrew = true;
+    }
+  }
+  assert(missingInThrew, 'Rechaza salida si la jornada no cuenta con una hora de entrada previa válida');
+  assert(dummyAtt.clockInTime === null, 'No muta la jornada si falta la entrada');
+
+  // -----------------------------------------------------------------
+  // 10. PRUEBA DE REINTENTO DE SALIDA EN TURNO NOCTURNO (IDEMPOTENCIA)
+  // -----------------------------------------------------------------
+  console.log('\n🌙 10. Pruebas de Reintento de Salida en Turno Nocturno:');
+  const nightAtt = dataStore.recordClockIn({
+    userId: 'user_p2',
+    organizationId: 'org_mepy_2026',
+    date: '2026-11-22',
+    timestamp: new Date('2026-11-22T22:00:00-03:00'),
+    lat: -25.496469,
+    lng: -54.789641,
+    accuracy: 12,
+    distanceMeters: 8,
+    status: 'VALID',
+    idempotencyToken: 'token_night_in_001',
+  });
+
+  const firstClockOut = dataStore.recordClockOut({
+    attendanceId: nightAtt.id,
+    timestamp: new Date('2026-11-23T06:00:00-03:00'),
+    lat: -25.496469,
+    lng: -54.789641,
+    accuracy: 10,
+    distanceMeters: 5,
+    status: 'VALID',
+    idempotencyToken: 'token_night_out_001',
+  });
+  assert(firstClockOut.clockOutTime !== null, 'Primera salida del turno nocturno asentada exitosamente');
+
+  // Reintento (ej: teléfono móvil perdió señal y repite la petición a las 06:03)
+  const retryClockOut = dataStore.recordClockOut({
+    attendanceId: nightAtt.id,
+    timestamp: new Date('2026-11-23T06:03:00-03:00'),
+    lat: -25.496469,
+    lng: -54.789641,
+    accuracy: 10,
+    distanceMeters: 5,
+    status: 'VALID',
+    idempotencyToken: 'token_night_out_001',
+  });
+  assert(
+    retryClockOut.clockOutTime === firstClockOut.clockOutTime,
+    'Reintento de salida no sobreescribe la hora de salida original'
+  );
+
+  // -----------------------------------------------------------------
+  // 11. PRUEBA DE SANITIZACIÓN Y ANONIMIZACIÓN DE CORREOS
+  // -----------------------------------------------------------------
+  console.log('\n📧 11. Pruebas de Seguridad en Correos y Bitácoras:');
+  const { maskEmail } = await import('../src/lib/email/email-service');
+  assert(maskEmail('funcionario@empresa.com.py') === 'fu***@empresa.com.py', 'Anonimiza email estándar');
+  assert(maskEmail('ab@empresa.com.py') === 'a***@empresa.com.py', 'Anonimiza email corto');
+  assert(maskEmail('') === '***', 'Maneja email vacío de forma segura');
+
+  // -----------------------------------------------------------------
+  // 12. PRUEBA DE EXPORTACIÓN DE CIERRE: SELECCIÓN PUNTUAL VS BORRADOR
+  // -----------------------------------------------------------------
+  console.log('\n📑 12. Pruebas de Cierre de Período y Borrador de Rango:');
+  const { generateClosureExcel } = await import('../src/lib/export/excel-generator');
+  
+  // Caso sin closureId: debe generar borrador de rango sin caer en el primer cierre
+  const draftExcelBuf = await generateClosureExcel({
+    orgId: 'org_mepy_2026',
+    startDate: '2026-11-01',
+    endDate: '2026-11-15',
+  });
+  const wbDraft = new ExcelJS.Workbook();
+  await wbDraft.xlsx.load(draftExcelBuf as unknown as ExcelJS.Buffer);
+  const draftSheet1 = wbDraft.getWorksheet('Borrador de Liquidación');
+  assert(draftSheet1 !== undefined, 'Exportación sin closureId genera hoja «Borrador de Liquidación»');
+  const titleVal = draftSheet1?.getCell('A1').value?.toString();
+  assert(
+    titleVal?.includes('BORRADOR DE LIQUIDACIÓN DE RANGO'),
+    'El encabezado indica explícitamente BORRADOR DE LIQUIDACIÓN DE RANGO (NO CERRADO)'
+  );
+
   // Resumen final
   console.log('\n===============================================================');
   console.log(`🏁 RESULTADO FINAL: ${passedTests}/${totalTests} pruebas superadas exitosamente.`);

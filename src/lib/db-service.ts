@@ -3,12 +3,30 @@
 
 import { db, isDatabaseConnected, isDemoModeEnabled, assertDatabaseAvailable } from '@/db';
 import * as schema from '@/db/schema';
-import { eq, and, gte, lte, inArray, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, inArray, desc, isNull, isNotNull } from 'drizzle-orm';
 import { dataStore, OrgData, CrewData, ShiftTemplateData, UserData, ShiftData, AttendanceData, AttendanceIncidentData, PeriodClosureData, AuditLogData } from './data-store';
 import { calculateShiftHours } from './time/timezone';
 import crypto from 'crypto';
 
 export class DatabaseService {
+  private async runInTransaction<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+    const isNeonHttp = process.env.DATABASE_URL?.includes('neon.tech') && !process.env.DATABASE_URL?.includes('localhost');
+    if (isNeonHttp) {
+      return await fn(db);
+    }
+    try {
+      if (typeof (db as any)?.transaction === 'function') {
+        return await (db as any).transaction(fn);
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('No transactions support in neon-http driver')) {
+        return await fn(db);
+      }
+      throw err;
+    }
+    return await fn(db);
+  }
+
   /**
    * ORGANIZACIÓN Y CONFIGURACIÓN
    */
@@ -206,7 +224,12 @@ export class DatabaseService {
     }
 
     const [u] = await db.select().from(schema.users).where(eq(schema.users.id, userId));
-    if (!u) return null;
+    if (!u) {
+      if (isDemoModeEnabled()) {
+        return dataStore.getUser(userId) || null;
+      }
+      return null;
+    }
 
     return {
       id: u.id,
@@ -232,7 +255,12 @@ export class DatabaseService {
     }
 
     const [u] = await db.select().from(schema.users).where(eq(schema.users.email, email.toLowerCase().trim()));
-    if (!u) return null;
+    if (!u) {
+      if (isDemoModeEnabled()) {
+        return dataStore.getUserByEmail(email) || null;
+      }
+      return null;
+    }
 
     return {
       id: u.id,
@@ -314,7 +342,7 @@ export class DatabaseService {
     const orgId = user.organizationId;
 
     const now = new Date();
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       await tx
         .update(schema.users)
         .set({ isActive: false, deactivatedAt: now, updatedAt: now })
@@ -575,14 +603,67 @@ export class DatabaseService {
       return dataStore.findOpenAttendance(userId) || null;
     }
 
+    const cutoff = new Date(Date.now() - 30 * 3600 * 1000);
+
     const rows = await db
       .select()
       .from(schema.attendances)
-      .where(and(eq(schema.attendances.userId, userId), eq(schema.attendances.status, 'EN_CURSO')))
-      .orderBy(desc(schema.attendances.date));
+      .where(
+        and(
+          eq(schema.attendances.userId, userId),
+          eq(schema.attendances.status, 'EN_CURSO'),
+          isNotNull(schema.attendances.clockInTime),
+          gte(schema.attendances.clockInTime, cutoff)
+        )
+      )
+      .orderBy(desc(schema.attendances.clockInTime));
 
     if (rows.length === 0) return null;
     const att = rows[0];
+
+    return {
+      id: att.id,
+      organizationId: att.organizationId,
+      userId: att.userId,
+      shiftId: att.shiftId,
+      date: att.date,
+      clockInTime: att.clockInTime ? att.clockInTime.toISOString() : null,
+      clockInLat: att.clockInLat,
+      clockInLng: att.clockInLng,
+      clockInAccuracy: att.clockInAccuracy,
+      clockInDistanceMeters: att.clockInDistanceMeters,
+      clockInStatus: att.clockInStatus as any,
+      clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
+      clockOutLat: att.clockOutLat,
+      clockOutLng: att.clockOutLng,
+      clockOutAccuracy: att.clockOutAccuracy,
+      clockOutDistanceMeters: att.clockOutDistanceMeters,
+      clockOutStatus: att.clockOutStatus as any,
+      workedDays: Number(att.workedDays),
+      dayHours: Number(att.dayHours),
+      nightHours: Number(att.nightHours),
+      totalHours: Number(att.totalHours),
+      status: att.status as any,
+      isManualCorrection: att.isManualCorrection,
+      correctionReason: att.correctionReason,
+      idempotencyToken: att.idempotencyToken,
+      notes: att.notes,
+    };
+  }
+
+  async getAttendanceByIdempotencyToken(token: string): Promise<AttendanceData | null> {
+    assertDatabaseAvailable();
+    if (!token) return null;
+    if (!isDatabaseConnected() && isDemoModeEnabled()) {
+      return dataStore.getAttendanceByIdempotencyToken(token) || null;
+    }
+
+    const [att] = await db
+      .select()
+      .from(schema.attendances)
+      .where(eq(schema.attendances.idempotencyToken, token));
+
+    if (!att) return null;
 
     return {
       id: att.id,
@@ -695,45 +776,43 @@ export class DatabaseService {
     const newId = `att_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date();
 
-    await db.transaction(async (tx: any) => {
-      await tx.insert(schema.attendances).values({
-        id: newId,
-        organizationId: params.organizationId,
-        userId: params.userId,
-        shiftId: params.shiftId,
-        date: params.date,
-        clockInTime: params.timestamp,
-        clockInLat: params.lat,
-        clockInLng: params.lng,
-        clockInAccuracy: params.accuracy,
-        clockInDistanceMeters: params.distanceMeters,
-        clockInStatus: params.status,
-        status: 'EN_CURSO',
-        workedDays: '0',
-        dayHours: '0',
-        nightHours: '0',
-        totalHours: '0',
-        isManualCorrection: false,
-        idempotencyToken: params.idempotencyToken,
-        createdAt: now,
-        updatedAt: now,
-      });
+    await db.insert(schema.attendances).values({
+      id: newId,
+      organizationId: params.organizationId,
+      userId: params.userId,
+      shiftId: params.shiftId,
+      date: params.date,
+      clockInTime: params.timestamp,
+      clockInLat: params.lat,
+      clockInLng: params.lng,
+      clockInAccuracy: params.accuracy,
+      clockInDistanceMeters: params.distanceMeters,
+      clockInStatus: params.status,
+      status: 'EN_CURSO',
+      workedDays: '0',
+      dayHours: '0',
+      nightHours: '0',
+      totalHours: '0',
+      isManualCorrection: false,
+      idempotencyToken: params.idempotencyToken,
+      createdAt: now,
+      updatedAt: now,
+    });
 
-      await tx.insert(schema.auditLogs).values({
-        id: `audit_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
-        organizationId: params.organizationId,
-        userId: params.userId,
-        action: 'CLOCK_IN_RECORDED',
-        entity: 'ATTENDANCE',
-        entityId: newId,
-        details: {
-          lat: params.lat,
-          lng: params.lng,
-          accuracy: params.accuracy,
-          distanceMeters: params.distanceMeters,
-        },
-        createdAt: now,
-      });
+    await db.insert(schema.auditLogs).values({
+      id: `audit_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      organizationId: params.organizationId,
+      userId: params.userId,
+      action: 'CLOCK_IN_RECORDED',
+      entity: 'ATTENDANCE',
+      entityId: newId,
+      details: {
+        lat: params.lat,
+        lng: params.lng,
+        accuracy: params.accuracy,
+        distanceMeters: params.distanceMeters,
+      },
+      createdAt: now,
     });
 
     return (await this.getAttendance(newId))!;
@@ -764,31 +843,43 @@ export class DatabaseService {
       return existing;
     }
 
-    const clockInIso = existing.clockInTime || params.timestamp.toISOString();
+    if (!existing.clockInTime) {
+      throw new Error('No se puede registrar salida en una jornada sin hora de entrada válida.');
+    }
+
+    const clockInIso = existing.clockInTime;
     const clockOutIso = params.timestamp.toISOString();
     const calc = calculateShiftHours(clockInIso, clockOutIso);
 
     const now = new Date();
-    await db.transaction(async (tx: any) => {
-      await tx
-        .update(schema.attendances)
-        .set({
-          clockOutTime: params.timestamp,
-          clockOutLat: params.lat,
-          clockOutLng: params.lng,
-          clockOutAccuracy: params.accuracy,
-          clockOutDistanceMeters: params.distanceMeters,
-          clockOutStatus: params.status,
-          workedDays: calc.workedDays.toString(),
-          dayHours: calc.dayHours.toString(),
-          nightHours: calc.nightHours.toString(),
-          totalHours: calc.totalHours.toString(),
-          status: 'COMPLETA',
-          updatedAt: now,
-        })
-        .where(eq(schema.attendances.id, params.attendanceId));
+    const updatedRows = await db
+      .update(schema.attendances)
+      .set({
+        clockOutTime: params.timestamp,
+        clockOutLat: params.lat,
+        clockOutLng: params.lng,
+        clockOutAccuracy: params.accuracy,
+        clockOutDistanceMeters: params.distanceMeters,
+        clockOutStatus: params.status,
+        workedDays: calc.workedDays.toString(),
+        dayHours: calc.dayHours.toString(),
+        nightHours: calc.nightHours.toString(),
+        totalHours: calc.totalHours.toString(),
+        status: 'COMPLETA',
+        idempotencyToken: params.idempotencyToken || existing.idempotencyToken,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.attendances.id, params.attendanceId),
+          isNull(schema.attendances.clockOutTime)
+        )
+      )
+      .returning();
 
-      await tx.insert(schema.auditLogs).values({
+    // Solo si esta operación atómica fue la que efectivamente registró la salida, creamos la auditoría
+    if (updatedRows && updatedRows.length > 0) {
+      await db.insert(schema.auditLogs).values({
         id: `audit_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
         organizationId: existing.organizationId,
         userId: existing.userId,
@@ -803,7 +894,7 @@ export class DatabaseService {
         },
         createdAt: now,
       });
-    });
+    }
 
     return (await this.getAttendance(params.attendanceId))!;
   }
@@ -853,7 +944,7 @@ export class DatabaseService {
     const now = new Date();
     let attId = params.attendanceId;
 
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       if (attId) {
         await tx
           .update(schema.attendances)
@@ -1077,7 +1168,7 @@ export class DatabaseService {
     const targetOrgId = existingInc?.organizationId || 'org_mepy_2026';
 
     const now = new Date();
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       await tx
         .update(schema.attendanceIncidents)
         .set({
@@ -1336,7 +1427,7 @@ export class DatabaseService {
     };
 
     const now = new Date();
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       await tx
         .update(schema.periodClosures)
         .set({
@@ -1425,6 +1516,30 @@ export class DatabaseService {
     return inv || null;
   }
 
+  async listInvitations(orgId: string) {
+    assertDatabaseAvailable();
+    if (!isDatabaseConnected() && isDemoModeEnabled()) {
+      return [];
+    }
+    return db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.organizationId, orgId))
+      .orderBy(desc(schema.invitations.createdAt));
+  }
+
+  async getInvitationById(id: string) {
+    assertDatabaseAvailable();
+    if (!isDatabaseConnected() && isDemoModeEnabled()) {
+      return null;
+    }
+    const [inv] = await db
+      .select()
+      .from(schema.invitations)
+      .where(eq(schema.invitations.id, id));
+    return inv || null;
+  }
+
   async acceptInvitation(token: string, passwordHash: string): Promise<UserData> {
     assertDatabaseAvailable();
     if (!isDatabaseConnected() && isDemoModeEnabled()) {
@@ -1449,7 +1564,7 @@ export class DatabaseService {
     const now = new Date();
     const newUserId = `user_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
 
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       await tx.insert(schema.users).values({
         id: newUserId,
         organizationId: inv.organizationId,
@@ -1538,7 +1653,7 @@ export class DatabaseService {
     const targetOrgId = user?.organizationId || 'org_mepy_2026';
 
     const now = new Date();
-    await db.transaction(async (tx: any) => {
+    await this.runInTransaction(async (tx: any) => {
       // 1. Quemamos el token para que sea de UN SOLO USO
       await tx
         .update(schema.passwordResetTokens)

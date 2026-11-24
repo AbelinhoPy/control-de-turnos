@@ -1026,6 +1026,16 @@ class DataStoreManager {
     const att = this.attendances.find((a) => a.id === params.attendanceId);
     if (!att) throw new Error('Registro de asistencia no encontrado');
 
+    // La salida nunca debe registrarse sin una entrada previa válida
+    if (!att.clockInTime) {
+      throw new Error('No se puede registrar salida en una jornada sin hora de entrada válida.');
+    }
+
+    // Proteger salida ya registrada (evitar sobreescrituras en reintentos)
+    if (att.clockOutTime) {
+      return att;
+    }
+
     const outTimeIso = params.timestamp.toISOString();
     att.clockOutTime = outTimeIso;
     att.clockOutLat = params.lat;
@@ -1033,17 +1043,18 @@ class DataStoreManager {
     att.clockOutAccuracy = params.accuracy;
     att.clockOutDistanceMeters = params.distanceMeters;
     att.clockOutStatus = params.status;
+    if (params.idempotencyToken) {
+      att.idempotencyToken = params.idempotencyToken;
+    }
 
-    // Calcular jornada completa
-    if (att.clockInTime) {
-      const calc = calculateShiftHours(att.clockInTime, outTimeIso);
-      att.totalHours = calc.totalHours;
-      att.dayHours = calc.dayHours;
-      att.nightHours = calc.nightHours;
-      att.workedDays = calc.workedDays;
-      att.status = 'COMPLETA';
-    } else {
-      att.status = 'INCOMPLETA';
+    const calc = calculateShiftHours(att.clockInTime, outTimeIso);
+    att.totalHours = calc.totalHours;
+    att.dayHours = calc.dayHours;
+    att.nightHours = calc.nightHours;
+    att.workedDays = calc.workedDays;
+    att.status = 'COMPLETA';
+    if (params.idempotencyToken) {
+      att.idempotencyToken = params.idempotencyToken;
     }
 
     return att;
@@ -1301,7 +1312,20 @@ class DataStoreManager {
   }
 
   public findOpenAttendance(userId: string): AttendanceData | undefined {
-    return this.attendances.find((a) => a.userId === userId && a.clockInTime && !a.clockOutTime);
+    const cutoff = Date.now() - 30 * 3600 * 1000;
+    return this.attendances
+      .slice()
+      .reverse()
+      .find((a) => {
+        if (a.userId !== userId || !a.clockInTime || a.clockOutTime) return false;
+        const inTime = new Date(a.clockInTime).getTime();
+        return inTime >= cutoff;
+      });
+  }
+
+  public getAttendanceByIdempotencyToken(token: string): AttendanceData | undefined {
+    if (!token) return undefined;
+    return this.attendances.find((a) => a.idempotencyToken === token);
   }
 
   public getAttendanceForUserAndDate(userId: string, date: string): AttendanceData | undefined {

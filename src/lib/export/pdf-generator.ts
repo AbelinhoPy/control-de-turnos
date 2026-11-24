@@ -426,103 +426,208 @@ export async function generateReportPdf(params: {
 
   // 6. CIERRE DE PERÍODO (Consulta por closureId específico y snapshot inmutable)
   else {
-    const closures = await dbService.listPeriodClosures(params.orgId);
-    const activeClosure = params.closureId
-      ? await dbService.getPeriodClosure(params.closureId)
-      : closures[0]
-      ? await dbService.getPeriodClosure(closures[0].id)
-      : null;
+    let activeClosure: any = null;
+    if (params.closureId) {
+      const fetched = await dbService.getPeriodClosure(params.closureId);
+      if (fetched && fetched.organizationId === params.orgId) {
+        activeClosure = fetched;
+      }
+    }
 
-    drawHeader(
-      `REPORTE DE CIERRE DE PERÍODO — ${activeClosure?.name.toUpperCase() || 'CIERRE'}`,
-      `Período: ${activeClosure?.startDate || params.startDate} al ${activeClosure?.endDate || params.endDate} | Estado: ${activeClosure?.status || 'BORRADOR'}`
-    );
+    if (activeClosure) {
+      drawHeader(
+        `REPORTE DE CIERRE DE PERÍODO — ${activeClosure.name.toUpperCase()} (INMUTABLE)`,
+        `Período: ${activeClosure.startDate} al ${activeClosure.endDate} | Estado: ${activeClosure.status === 'APROBADO' ? 'APROBADO (Inmutable / Congelado)' : activeClosure.status}`
+      );
 
-    const summaryData = (activeClosure?.summaryData as any) || {};
+      const summaryData = (activeClosure.summaryData as any) || {};
 
-    // Tabla 1: Resumen General y Reglas Inmutables
-    const summaryHead = [
-      ['Parámetro', 'Valor Registrado', 'Parámetro', 'Valor Registrado'],
-    ];
+      // Tabla 1: Resumen General y Reglas Inmutables
+      const summaryHead = [
+        ['Parámetro', 'Valor Registrado', 'Parámetro', 'Valor Registrado'],
+      ];
 
-    const summaryBody = [
-      [
-        'Estado del Cierre:',
-        activeClosure?.status || 'BORRADOR',
-        'Personal Activo:',
-        (summaryData.totalEmployees || 0).toString(),
-      ],
-      [
-        'Rango de Fechas:',
-        `${activeClosure?.startDate} al ${activeClosure?.endDate}`,
-        'Días Totales Computados:',
-        (summaryData.totalDaysWorked || 0).toFixed(1),
-      ],
-      [
-        'Aprobado Por:',
-        activeClosure?.approvedByName || 'Pendiente de aprobación',
-        'Total Horas Diurnas:',
-        `${(summaryData.totalDayHours || 0).toFixed(1)} hs`,
-      ],
-      [
-        'Fecha de Aprobación:',
-        activeClosure?.approvedAt ? formatDateAsuncion(activeClosure.approvedAt) : 'Borrador',
-        'Total Horas Nocturnas (+30%):',
-        `${(summaryData.totalNightHours || 0).toFixed(1)} hs`,
-      ],
-      [
-        'Franja Nocturna Aplicada:',
-        `${activeClosure?.nightHourStart} a ${activeClosure?.nightHourEnd} hs`,
-        'Total General de Horas:',
-        `${(summaryData.totalHours || 0).toFixed(1)} hs`,
-      ],
-    ];
+      const summaryBody = [
+        [
+          'Estado del Cierre:',
+          activeClosure.status === 'APROBADO' ? 'APROBADO (Congelado)' : activeClosure.status,
+          'Personal Activo:',
+          (summaryData.totalEmployees || 0).toString(),
+        ],
+        [
+          'Rango de Fechas:',
+          `${activeClosure.startDate} al ${activeClosure.endDate}`,
+          'Días Totales Computados:',
+          (summaryData.totalDaysWorked || 0).toFixed(1),
+        ],
+        [
+          'Aprobado Por:',
+          activeClosure.approvedByName || 'Pendiente de aprobación',
+          'Total Horas Diurnas:',
+          `${(summaryData.totalDayHours || 0).toFixed(1)} hs`,
+        ],
+        [
+          'Fecha de Aprobación:',
+          activeClosure.approvedAt ? formatDateAsuncion(activeClosure.approvedAt) : 'Borrador',
+          'Total Horas Nocturnas (+30%):',
+          `${(summaryData.totalNightHours || 0).toFixed(1)} hs`,
+        ],
+        [
+          'Franja Nocturna Aplicada:',
+          `${activeClosure.nightHourStart} a ${activeClosure.nightHourEnd} hs`,
+          'Total General de Horas:',
+          `${(summaryData.totalHours || 0).toFixed(1)} hs`,
+        ],
+      ];
 
-    autoTable(doc, {
-      startY: 40,
-      head: summaryHead,
-      body: summaryBody,
-      theme: 'grid',
-      showHead: 'everyPage',
-      headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
-      bodyStyles: { fontSize: 8 },
-      margin: { left: 14, right: 14 },
-    });
-
-    // Tabla 2: Detalle por Funcionario
-    const lastY = (doc as any).lastAutoTable?.finalY || 80;
-    doc.setFontSize(11);
-    doc.setTextColor(15, 79, 95);
-    doc.text('Detalle por Funcionario y Liquidación:', 14, lastY + 8);
-
-    const detailHead = [
-      ['Funcionario', 'Cuadrilla', 'Días Trab.', 'Hs Diurnas', 'Hs Nocturnas', 'Total Horas', 'Jornal Base (Gs.)', 'Total Pagado (Gs.)'],
-    ];
-
-    const details = (activeClosure as any)?.detailsSnapshot || [];
-    const detailBody = details.map((d: any) => [
-      d.userName || 'Funcionario',
-      d.crewId || 'General',
-      Number(d.workedDays || 0).toFixed(1),
-      Number(d.dayHours || 0).toFixed(1),
-      Number(d.nightHours || 0).toFixed(1),
-      Number(d.totalHours || 0).toFixed(1),
-      Number(d.baseDailyWage || 100000).toLocaleString('es-PY'),
-      Number(d.totalPay || 0).toLocaleString('es-PY'),
-    ]);
-
-    if (detailBody.length > 0) {
       autoTable(doc, {
-        startY: lastY + 12,
-        head: detailHead,
-        body: detailBody,
+        startY: 40,
+        head: summaryHead,
+        body: summaryBody,
         theme: 'grid',
         showHead: 'everyPage',
-        headStyles: { fillColor: [30, 127, 148], textColor: 255, fontSize: 8, halign: 'center' },
+        headStyles: { fillColor: [15, 79, 95], textColor: 255, fontSize: 8, halign: 'center' },
         bodyStyles: { fontSize: 8 },
-        alternateRowStyles: { fillColor: [245, 250, 252] },
         margin: { left: 14, right: 14 },
       });
+
+      // Tabla 2: Detalle por Funcionario (Snapshot)
+      const lastY = (doc as any).lastAutoTable?.finalY || 80;
+      doc.setFontSize(11);
+      doc.setTextColor(15, 79, 95);
+      doc.text('Detalle por Funcionario y Liquidación (Snapshot Inmutable):', 14, lastY + 8);
+
+      const detailHead = [
+        ['Funcionario', 'Cuadrilla', 'Días Trab.', 'Hs Diurnas', 'Hs Nocturnas', 'Total Horas', 'Jornal Base (Gs.)', 'Total Pagado (Gs.)'],
+      ];
+
+      const details = (activeClosure as any)?.detailsSnapshot || [];
+      const detailBody = details.map((d: any) => [
+        d.userName || 'Funcionario',
+        d.crewId || 'General',
+        Number(d.workedDays || 0).toFixed(1),
+        Number(d.dayHours || 0).toFixed(1),
+        Number(d.nightHours || 0).toFixed(1),
+        Number(d.totalHours || 0).toFixed(1),
+        Number(d.baseDailyWage || 100000).toLocaleString('es-PY'),
+        Number(d.totalPay || 0).toLocaleString('es-PY'),
+      ]);
+
+      if (detailBody.length > 0) {
+        autoTable(doc, {
+          startY: lastY + 12,
+          head: detailHead,
+          body: detailBody,
+          theme: 'grid',
+          showHead: 'everyPage',
+          headStyles: { fillColor: [30, 127, 148], textColor: 255, fontSize: 8, halign: 'center' },
+          bodyStyles: { fontSize: 8 },
+          alternateRowStyles: { fillColor: [245, 250, 252] },
+          margin: { left: 14, right: 14 },
+        });
+      }
+    } else {
+      // Si no se pasó closureId o no pertenece a la organización: BORRADOR DE RANGO NO CERRADO
+      drawHeader(
+        'BORRADOR DE CIERRE DE PERÍODO (NO CERRADO)',
+        `Rango: ${params.startDate} al ${params.endDate} | Estado: BORRADOR NO CERRADO (Valores preliminares en vivo)`
+      );
+
+      const draftAttendances = await dbService.listAttendances(params.orgId, {
+        startDate: params.startDate,
+        endDate: params.endDate,
+      });
+
+      let totalDays = 0;
+      let totalDayH = 0;
+      let totalNightH = 0;
+      let totalH = 0;
+
+      draftAttendances.forEach((a) => {
+        totalDays += a.workedDays;
+        totalDayH += a.dayHours;
+        totalNightH += a.nightHours;
+        totalH += a.totalHours;
+      });
+
+      const summaryHead = [['Parámetro', 'Valor Preliminar', 'Parámetro', 'Valor Preliminar']];
+      const summaryBody = [
+        [
+          'Estado del Documento:',
+          'BORRADOR NO CERRADO',
+          'Personal con Registros:',
+          new Set(draftAttendances.map((a) => a.userId)).size.toString(),
+        ],
+        [
+          'Rango Consultado:',
+          `${params.startDate} al ${params.endDate}`,
+          'Días Totales Computados:',
+          totalDays.toFixed(1),
+        ],
+        [
+          'Advertencia:',
+          'Valores sujetos a cambio',
+          'Total Horas Diurnas:',
+          `${totalDayH.toFixed(1)} hs`,
+        ],
+        [
+          'Franja Nocturna (+30%):',
+          `${org.nightHourStart} a ${org.nightHourEnd} hs`,
+          'Total Horas Nocturnas:',
+          `${totalNightH.toFixed(1)} hs`,
+        ],
+        [
+          'Tipo de Reporte:',
+          'Borrador de liquidación',
+          'Total General Horas:',
+          `${totalH.toFixed(1)} hs`,
+        ],
+      ];
+
+      autoTable(doc, {
+        startY: 40,
+        head: summaryHead,
+        body: summaryBody,
+        theme: 'grid',
+        showHead: 'everyPage',
+        headStyles: { fillColor: [180, 83, 9], textColor: 255, fontSize: 8, halign: 'center' },
+        bodyStyles: { fontSize: 8 },
+        margin: { left: 14, right: 14 },
+      });
+
+      const lastY = (doc as any).lastAutoTable?.finalY || 80;
+      doc.setFontSize(11);
+      doc.setTextColor(180, 83, 9);
+      doc.text('Detalle Preliminar de Jornadas (Borrador no cerrado):', 14, lastY + 8);
+
+      const detailHead = [
+        ['Fecha', 'Funcionario', 'Días Trab.', 'Hs Diurnas', 'Hs Nocturnas', 'Total Horas', 'Estado'],
+      ];
+
+      const userMap = new Map(users.map((u) => [u.id, u.name]));
+      const detailBody = draftAttendances.slice(0, 100).map((a) => [
+        a.date,
+        userMap.get(a.userId) || 'Funcionario',
+        Number(a.workedDays).toFixed(1),
+        Number(a.dayHours).toFixed(1),
+        Number(a.nightHours).toFixed(1),
+        Number(a.totalHours).toFixed(1),
+        a.status,
+      ]);
+
+      if (detailBody.length > 0) {
+        autoTable(doc, {
+          startY: lastY + 12,
+          head: detailHead,
+          body: detailBody,
+          theme: 'grid',
+          showHead: 'everyPage',
+          headStyles: { fillColor: [217, 119, 6], textColor: 255, fontSize: 8, halign: 'center' },
+          bodyStyles: { fontSize: 8 },
+          alternateRowStyles: { fillColor: [255, 251, 235] },
+          margin: { left: 14, right: 14 },
+        });
+      }
     }
   }
 

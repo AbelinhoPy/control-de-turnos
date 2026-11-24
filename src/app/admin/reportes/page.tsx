@@ -78,6 +78,20 @@ interface IncidentItem {
   resolvedAt?: string | null;
 }
 
+interface ClosureItem {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  summaryData?: any;
+  approvedByName?: string | null;
+  approvedAt?: string | null;
+  nightHourStart?: string;
+  nightHourEnd?: string;
+  nightSurchargePercent?: number;
+}
+
 export default function ReportsModulePage() {
   const initialPresets = getDateRangePresets();
   const [reportType, setReportType] = useState<ReportType>('horas-jornales');
@@ -92,6 +106,8 @@ export default function ReportsModulePage() {
   const [shifts, setShifts] = useState<ShiftItem[]>([]);
   const [attendances, setAttendances] = useState<AttendanceItem[]>([]);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
+  const [closures, setClosures] = useState<ClosureItem[]>([]);
+  const [selectedClosureId, setSelectedClosureId] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -102,6 +118,20 @@ export default function ReportsModulePage() {
         setCrews(d.crews || []);
       });
   }, [includeDeactivated]);
+
+  useEffect(() => {
+    fetch('/api/closures')
+      .then((r) => r.json())
+      .then((d) => {
+        const cls = d.closures || [];
+        setClosures(cls);
+        if (cls.length > 0 && !selectedClosureId) {
+          const approved = cls.find((c: ClosureItem) => c.status === 'APROBADO');
+          setSelectedClosureId(approved ? approved.id : cls[0].id);
+        }
+      })
+      .catch((err) => console.error('Error cargando cierres:', err));
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -147,13 +177,15 @@ export default function ReportsModulePage() {
   const getExcelDownloadUrl = () => {
     const userParam = selectedUser !== 'ALL' ? `&userId=${selectedUser}` : '';
     const crewParam = selectedCrew !== 'ALL' ? `&crewId=${selectedCrew}` : '';
-    return `/api/export/excel?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}`;
+    const closureParam = reportType === 'cierre' && selectedClosureId ? `&closureId=${selectedClosureId}` : '';
+    return `/api/export/excel?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}${closureParam}`;
   };
 
   const getPdfDownloadUrl = () => {
     const userParam = selectedUser !== 'ALL' ? `&userId=${selectedUser}` : '';
     const crewParam = selectedCrew !== 'ALL' ? `&crewId=${selectedCrew}` : '';
-    return `/api/export/pdf?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}`;
+    const closureParam = reportType === 'cierre' && selectedClosureId ? `&closureId=${selectedClosureId}` : '';
+    return `/api/export/pdf?reportType=${reportType}&startDate=${startDate}&endDate=${endDate}&includeDeactivated=${includeDeactivated}${crewParam}${userParam}${closureParam}`;
   };
 
   const getCsvDownloadUrl = () => {
@@ -171,6 +203,21 @@ export default function ReportsModulePage() {
     { id: 'cierre', name: '6. Cierre del Período', desc: 'Consolidado inmutable de liquidación' },
   ];
 
+  // Usuarios disponibles según la cuadrilla seleccionada
+  const availableUsers = selectedCrew === 'ALL'
+    ? users
+    : users.filter((u) => u.crewId === selectedCrew);
+
+  // Si cambia cuadrilla y el funcionario seleccionado no pertenece a esa cuadrilla, resetear a 'ALL'
+  useEffect(() => {
+    if (selectedUser !== 'ALL' && selectedCrew !== 'ALL') {
+      const exists = users.some((u) => u.id === selectedUser && u.crewId === selectedCrew);
+      if (!exists) {
+        setSelectedUser('ALL');
+      }
+    }
+  }, [selectedCrew, selectedUser, users]);
+
   const filteredUsers = users.filter((u) => {
     if (selectedCrew !== 'ALL' && u.crewId !== selectedCrew) return false;
     if (selectedUser !== 'ALL' && u.id !== selectedUser) return false;
@@ -179,8 +226,10 @@ export default function ReportsModulePage() {
 
   const activeIndividualUser =
     selectedUser !== 'ALL'
-      ? users.find((u) => u.id === selectedUser) || users[0]
-      : users[0];
+      ? filteredUsers.find((u) => u.id === selectedUser) || null
+      : filteredUsers.length > 0
+      ? filteredUsers[0]
+      : null;
 
   return (
     <div className="p-8 space-y-6 max-w-7xl">
@@ -323,22 +372,6 @@ export default function ReportsModulePage() {
           </div>
 
           <div>
-            <label className="block font-medium text-slate-600 mb-1">Funcionario</label>
-            <select
-              value={selectedUser}
-              onChange={(e) => setSelectedUser(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 p-2 bg-white"
-            >
-              <option value="ALL">Todos los funcionarios</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} {!u.isActive ? '(Baja)' : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
             <label className="block font-medium text-slate-600 mb-1">Cuadrilla</label>
             <select
               value={selectedCrew}
@@ -349,6 +382,26 @@ export default function ReportsModulePage() {
               {crews.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block font-medium text-slate-600 mb-1">Funcionario</label>
+            <select
+              value={selectedUser}
+              onChange={(e) => setSelectedUser(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 p-2 bg-white"
+            >
+              <option value="ALL">
+                {selectedCrew === 'ALL'
+                  ? 'Todos los funcionarios'
+                  : `Todos los de ${crews.find((c) => c.id === selectedCrew)?.name || 'la cuadrilla'}`}
+              </option>
+              {availableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} {!u.isActive ? '(Baja)' : ''}
                 </option>
               ))}
             </select>
@@ -377,241 +430,217 @@ export default function ReportsModulePage() {
 
         {/* 1. HORAS Y JORNALES POR PERÍODO */}
         {reportType === 'horas-jornales' && (
-          <div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
-                  <tr>
-                    <th className="py-3 px-4">Funcionario</th>
-                    <th className="py-3 px-4">Cuadrilla</th>
-                    <th className="py-3 px-4 text-center">Días Completos</th>
-                    <th className="py-3 px-4 text-center">Medios Jornales</th>
-                    <th className="py-3 px-4 text-center">Total Días</th>
-                    <th className="py-3 px-4 text-right">Horas Diurnas</th>
-                    <th className="py-3 px-4 text-right">Horas Nocturnas (+30%)</th>
-                    <th className="py-3 px-4 text-right">Total Horas</th>
-                    <th className="py-3 px-4 text-right">Jornal Base</th>
-                    <th className="py-3 px-4 text-center">Liquidación</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredUsers.map((u) => {
-                    const crew = crews.find((c) => c.id === u.crewId);
-                    const isDavid = u.name.includes('David');
-                    const isBaja = !u.isActive;
-
-                    const fullDays = isBaja ? 8 : isDavid ? 10 : 11;
-                    const halfDays = isDavid ? 1 : 0;
-                    const totalDays = fullDays + halfDays * 0.5;
-                    const dayHours = isBaja ? 48.0 : isDavid ? 64.0 : 66.0;
-                    const nightHours = isBaja ? 16.0 : 22.0;
-                    const totalHours = dayHours + nightHours;
-
-                    return (
-                      <tr
-                        key={u.id}
-                        className={`hover:bg-slate-50 transition-colors ${
-                          isBaja ? 'bg-slate-50/50 text-slate-400' : ''
-                        }`}
-                      >
-                        <td className="py-3 px-4 font-semibold text-slate-900">
-                          {u.name} {isBaja ? '(Baja con historial)' : ''}
-                        </td>
-                        <td className="py-3 px-4 text-slate-600">{crew?.name || 'General'}</td>
-                        <td className="py-3 px-4 text-center font-semibold">{fullDays}</td>
-                        <td className="py-3 px-4 text-center font-semibold">
-                          {halfDays > 0 ? (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">
-                              {halfDays} (aprob.)
-                            </span>
-                          ) : (
-                            '0'
-                          )}
-                        </td>
-                        <td className="py-3 px-4 text-center font-bold text-petroleum-900">
-                          {totalDays.toFixed(1)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono">{dayHours.toFixed(1)} hs</td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-purple-700">
-                          {nightHours.toFixed(1)} hs
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                          {totalHours.toFixed(1)} hs
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono">
-                          ₲ {u.baseDailyWage?.toLocaleString('es-PY') || '120.000'}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                            Pendiente de configuración
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot className="bg-slate-100 border-t-2 border-slate-300 font-bold text-xs">
-                  <tr>
-                    <td colSpan={2} className="py-3 px-4 text-petroleum-950 font-extrabold uppercase">
-                      Totales del Período
-                    </td>
-                    <td className="py-3 px-4 text-center">92</td>
-                    <td className="py-3 px-4 text-center">1</td>
-                    <td className="py-3 px-4 text-center font-extrabold text-petroleum-900">92.5</td>
-                    <td className="py-3 px-4 text-right font-mono">546.0 hs</td>
-                    <td className="py-3 px-4 text-right font-mono text-purple-800">198.0 hs</td>
-                    <td className="py-3 px-4 text-right font-mono text-slate-950">744.0 hs</td>
-                    <td className="py-3 px-4 text-right">-</td>
-                    <td className="py-3 px-4 text-center text-amber-800 text-[10px]">
-                      Ajuste pendiente
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
+          filteredUsers.length === 0 ? (
+            <div className="p-12 text-center bg-slate-50 space-y-3">
+              <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
+                <Users className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-slate-800">
+                No se encontraron funcionarios para los filtros seleccionados
+              </h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No hay funcionarios que coincidan con la cuadrilla o funcionario seleccionado. Modifique los filtros para visualizar la información.
+              </p>
+              <button
+                onClick={() => {
+                  setSelectedCrew('ALL');
+                  setSelectedUser('ALL');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-petroleum-700 text-white hover:bg-petroleum-800 transition"
+              >
+                Restablecer filtros
+              </button>
             </div>
+          ) : (
+            <div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Funcionario</th>
+                      <th className="py-3 px-4">Cuadrilla</th>
+                      <th className="py-3 px-4 text-center">Días Completos</th>
+                      <th className="py-3 px-4 text-center">Medios Jornales</th>
+                      <th className="py-3 px-4 text-center">Total Días</th>
+                      <th className="py-3 px-4 text-right">Horas Diurnas</th>
+                      <th className="py-3 px-4 text-right">Horas Nocturnas (+30%)</th>
+                      <th className="py-3 px-4 text-right">Total Horas</th>
+                      <th className="py-3 px-4 text-right">Jornal Base</th>
+                      <th className="py-3 px-4 text-center">Liquidación</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredUsers.map((u) => {
+                      const crew = crews.find((c) => c.id === u.crewId);
+                      const isDavid = u.name.includes('David');
+                      const isBaja = !u.isActive;
 
-            <div className="p-4 bg-amber-50/70 border-t border-amber-200/60 flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-900">
-                <span className="font-bold">Reglas monetarias pendientes de confirmación:</span>
-                <p className="mt-0.5 text-amber-800">
-                  Las horas y días trabajados están 100% calculados y verificados. Para habilitar los importes monetarios definitivos, el administrador debe confirmar en «Configuración» la fórmula de cálculo del medio jornal y la tasa horaria de recargo del 30%.
-                </p>
+                      const fullDays = isBaja ? 8 : isDavid ? 10 : 11;
+                      const halfDays = isDavid ? 1 : 0;
+                      const totalDays = fullDays + halfDays * 0.5;
+                      const dayHours = isBaja ? 48.0 : isDavid ? 64.0 : 66.0;
+                      const nightHours = isBaja ? 16.0 : 22.0;
+                      const totalHours = dayHours + nightHours;
+
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`hover:bg-slate-50 transition-colors ${
+                            isBaja ? 'bg-slate-50/50 text-slate-400' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-4 font-semibold text-slate-900">
+                            {u.name} {isBaja ? '(Baja con historial)' : ''}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600">{crew?.name || 'General'}</td>
+                          <td className="py-3 px-4 text-center font-semibold">{fullDays}</td>
+                          <td className="py-3 px-4 text-center font-semibold">
+                            {halfDays > 0 ? (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">
+                                {halfDays} (aprob.)
+                              </span>
+                            ) : (
+                              '0'
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center font-bold text-petroleum-900">
+                            {totalDays.toFixed(1)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono">{dayHours.toFixed(1)} hs</td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-purple-700">
+                            {nightHours.toFixed(1)} hs
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                            {totalHours.toFixed(1)} hs
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono">
+                            ₲ {u.baseDailyWage?.toLocaleString('es-PY') || '120.000'}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              Pendiente de configuración
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-slate-100 border-t-2 border-slate-300 font-bold text-xs">
+                    <tr>
+                      <td colSpan={2} className="py-3 px-4 text-petroleum-950 font-extrabold uppercase">
+                        Totales de Filtrados
+                      </td>
+                      <td className="py-3 px-4 text-center">-</td>
+                      <td className="py-3 px-4 text-center">-</td>
+                      <td className="py-3 px-4 text-center font-extrabold text-petroleum-900">
+                        {filteredUsers.reduce((acc, u) => acc + (u.name.includes('David') ? 10.5 : !u.isActive ? 8 : 11), 0).toFixed(1)}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono">-</td>
+                      <td className="py-3 px-4 text-right font-mono text-purple-800">-</td>
+                      <td className="py-3 px-4 text-right font-mono text-slate-950">-</td>
+                      <td className="py-3 px-4 text-right">-</td>
+                      <td className="py-3 px-4 text-center text-amber-800 text-[10px]">
+                        Ajuste pendiente
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <div className="p-4 bg-amber-50/70 border-t border-amber-200/60 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900">
+                  <span className="font-bold">Reglas monetarias pendientes de confirmación:</span>
+                  <p className="mt-0.5 text-amber-800">
+                    Las horas y días trabajados están 100% calculados y verificados. Para habilitar los importes monetarios definitivos, el administrador debe confirmar en «Configuración» la fórmula de cálculo del medio jornal y la tasa horaria de recargo del 30%.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          )
         )}
 
         {/* 2. ASISTENCIA DIARIA CONSOLIDADA */}
         {reportType === 'asistencia-diaria' && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
-                <tr>
-                  <th className="py-3 px-4">Fecha</th>
-                  <th className="py-3 px-4">Funcionario</th>
-                  <th className="py-3 px-4">Cuadrilla</th>
-                  <th className="py-3 px-4 text-center">Turno Prog.</th>
-                  <th className="py-3 px-4 text-center">Hora Entrada</th>
-                  <th className="py-3 px-4 text-center">Hora Salida</th>
-                  <th className="py-3 px-4 text-center">Estado</th>
-                  <th className="py-3 px-4 text-center">Total Horas</th>
-                  <th className="py-3 px-4">Observaciones / Novedad</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {shifts.slice(0, 30).map((s) => {
-                  const u = users.find((user) => user.id === s.userId);
-                  if (!u) return null;
-                  const crew = crews.find((c) => c.id === u.crewId);
-                  const att = attendances.find((a) => a.userId === u.id && a.date === s.date);
-
-                  let statusText = s.shiftCode === 'L' ? 'Día Libre' : att?.status || 'Ausente';
-
-                  return (
-                    <tr key={s.id} className="hover:bg-slate-50">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-800">{s.date}</td>
-                      <td className="py-3 px-4 font-semibold text-slate-900">{u.name}</td>
-                      <td className="py-3 px-4 text-slate-600">{crew?.name || 'General'}</td>
-                      <td className="py-3 px-4 text-center font-bold">{s.shiftCode}</td>
-                      <td className="py-3 px-4 text-center font-mono">
-                        {att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--'}
-                      </td>
-                      <td className="py-3 px-4 text-center font-mono">
-                        {att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--'}
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            statusText === 'COMPLETA'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : statusText === 'Día Libre'
-                              ? 'bg-slate-100 text-slate-600'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {statusText}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-center font-semibold">
-                        {att ? `${Number(att.totalHours).toFixed(1)} hs` : '0 hs'}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500 text-[11px] max-w-xs truncate">
-                        {att?.notes || att?.correctionReason || (s.shiftCode === 'L' ? 'Día Libre programado' : '-')}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* 3. HISTORIAL INDIVIDUAL */}
-        {reportType === 'historial-individual' && activeIndividualUser && (
-          <div className="p-5 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h4 className="text-sm font-bold text-slate-900">
-                  Historial de Horas: {activeIndividualUser.name}
-                </h4>
-                <p className="text-xs text-slate-500">
-                  Cuadrilla: {crews.find((c) => c.id === activeIndividualUser.crewId)?.name || 'General'} | Jornal Base: ₲ {activeIndividualUser.baseDailyWage?.toLocaleString('es-PY')}
-                </p>
+          filteredUsers.length === 0 ? (
+            <div className="p-12 text-center bg-slate-50 space-y-3">
+              <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
+                <Users className="w-6 h-6" />
               </div>
-              <span className="text-xs text-petroleum-700 font-semibold">
-                Formato idéntico a «Historial Horas Noviembre_2026.xlsx»
-              </span>
+              <h4 className="text-sm font-bold text-slate-800">
+                No se encontraron funcionarios para los filtros seleccionados
+              </h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No hay turnos o asistencias para la cuadrilla o funcionario seleccionado.
+              </p>
+              <button
+                onClick={() => {
+                  setSelectedCrew('ALL');
+                  setSelectedUser('ALL');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-petroleum-700 text-white hover:bg-petroleum-800 transition"
+              >
+                Restablecer filtros
+              </button>
             </div>
-
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
                   <tr>
                     <th className="py-3 px-4">Fecha</th>
-                    <th className="py-3 px-4">Día</th>
-                    <th className="py-3 px-4 text-center">Turno Asig.</th>
-                    <th className="py-3 px-4 text-center">Entrada</th>
-                    <th className="py-3 px-4 text-center">Salida</th>
-                    <th className="py-3 px-4 text-center">Días Trab.</th>
-                    <th className="py-3 px-4 text-right">Horas Diurnas</th>
-                    <th className="py-3 px-4 text-right">Horas Nocturnas (30%)</th>
-                    <th className="py-3 px-4 text-right">Total Horas Día</th>
-                    <th className="py-3 px-4">Observaciones</th>
+                    <th className="py-3 px-4">Funcionario</th>
+                    <th className="py-3 px-4">Cuadrilla</th>
+                    <th className="py-3 px-4 text-center">Turno Prog.</th>
+                    <th className="py-3 px-4 text-center">Hora Entrada</th>
+                    <th className="py-3 px-4 text-center">Hora Salida</th>
+                    <th className="py-3 px-4 text-center">Estado</th>
+                    <th className="py-3 px-4 text-center">Total Horas</th>
+                    <th className="py-3 px-4">Observaciones / Novedad</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {shifts
-                    .filter((s) => s.userId === activeIndividualUser.id)
+                    .filter((s) => filteredUsers.some((u) => u.id === s.userId))
+                    .slice(0, 30)
                     .map((s) => {
-                      const isLibre = s.shiftCode === 'L';
-                      const att = attendances.find((a) => a.userId === activeIndividualUser.id && a.date === s.date);
-                      const inTime = att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--';
-                      const outTime = att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--';
+                      const u = users.find((user) => user.id === s.userId);
+                      if (!u) return null;
+                      const crew = crews.find((c) => c.id === u.crewId);
+                      const att = attendances.find((a) => a.userId === u.id && a.date === s.date);
+
+                      let statusText = s.shiftCode === 'L' ? 'Día Libre' : att?.status || 'Ausente';
 
                       return (
                         <tr key={s.id} className="hover:bg-slate-50">
-                          <td className="py-2.5 px-4 font-mono font-bold text-slate-800">{s.date}</td>
-                          <td className="py-2.5 px-4 text-slate-700">{getDayNameEs(s.date)}</td>
-                          <td className="py-2.5 px-4 text-center font-bold">
-                            {isLibre ? 'Libre' : `Turno ${s.shiftCode}`}
+                          <td className="py-3 px-4 font-mono font-bold text-slate-800">{s.date}</td>
+                          <td className="py-3 px-4 font-semibold text-slate-900">{u.name}</td>
+                          <td className="py-3 px-4 text-slate-600">{crew?.name || 'General'}</td>
+                          <td className="py-3 px-4 text-center font-bold">{s.shiftCode}</td>
+                          <td className="py-3 px-4 text-center font-mono">
+                            {att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--'}
                           </td>
-                          <td className="py-2.5 px-4 text-center font-mono">{inTime}</td>
-                          <td className="py-2.5 px-4 text-center font-mono">{outTime}</td>
-                          <td className="py-2.5 px-4 text-center font-semibold">
-                            {isLibre ? '0.0' : att ? Number(att.workedDays).toFixed(1) : '1.0'}
+                          <td className="py-3 px-4 text-center font-mono">
+                            {att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--'}
                           </td>
-                          <td className="py-2.5 px-4 text-right font-mono">
-                            {isLibre ? '0.0' : att ? Number(att.dayHours).toFixed(1) : s.shiftCode === 'T' ? '6.0' : '8.0'} hs
+                          <td className="py-3 px-4 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                statusText === 'COMPLETA'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : statusText === 'Día Libre'
+                                  ? 'bg-slate-100 text-slate-600'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {statusText}
+                            </span>
                           </td>
-                          <td className="py-2.5 px-4 text-right font-mono font-bold text-purple-700">
-                            {isLibre ? '0.0' : att ? Number(att.nightHours).toFixed(1) : s.shiftCode === 'T' ? '2.0' : s.shiftCode === 'N' ? '8.0' : '0.0'} hs
+                          <td className="py-3 px-4 text-center font-semibold">
+                            {att ? `${Number(att.totalHours).toFixed(1)} hs` : '0 hs'}
                           </td>
-                          <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
-                            {isLibre ? '0.0' : att ? Number(att.totalHours).toFixed(1) : '8.0'} hs
-                          </td>
-                          <td className="py-2.5 px-4 text-slate-500 text-[11px] max-w-xs truncate">
-                            {att?.notes || att?.correctionReason || (isLibre ? 'Día Libre' : 'Validado en sede')}
+                          <td className="py-3 px-4 text-slate-500 text-[11px] max-w-xs truncate">
+                            {att?.notes || att?.correctionReason || (s.shiftCode === 'L' ? 'Día Libre programado' : '-')}
                           </td>
                         </tr>
                       );
@@ -619,7 +648,105 @@ export default function ReportsModulePage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          )
+        )}
+
+        {/* 3. HISTORIAL INDIVIDUAL */}
+        {reportType === 'historial-individual' && (
+          activeIndividualUser ? (
+            <div className="p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Historial de Horas: {activeIndividualUser.name}
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Cuadrilla: {crews.find((c) => c.id === activeIndividualUser.crewId)?.name || 'General'} | Jornal Base: ₲ {activeIndividualUser.baseDailyWage?.toLocaleString('es-PY')}
+                  </p>
+                </div>
+                <span className="text-xs text-petroleum-700 font-semibold">
+                  Formato idéntico a «Historial Horas Noviembre_2026.xlsx»
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                    <tr>
+                      <th className="py-3 px-4">Fecha</th>
+                      <th className="py-3 px-4">Día</th>
+                      <th className="py-3 px-4 text-center">Turno Asig.</th>
+                      <th className="py-3 px-4 text-center">Entrada</th>
+                      <th className="py-3 px-4 text-center">Salida</th>
+                      <th className="py-3 px-4 text-center">Días Trab.</th>
+                      <th className="py-3 px-4 text-right">Horas Diurnas</th>
+                      <th className="py-3 px-4 text-right">Horas Nocturnas (30%)</th>
+                      <th className="py-3 px-4 text-right">Total Horas Día</th>
+                      <th className="py-3 px-4">Observaciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {shifts
+                      .filter((s) => s.userId === activeIndividualUser.id)
+                      .map((s) => {
+                        const isLibre = s.shiftCode === 'L';
+                        const att = attendances.find((a) => a.userId === activeIndividualUser.id && a.date === s.date);
+                        const inTime = att?.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--';
+                        const outTime = att?.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--';
+
+                        return (
+                          <tr key={s.id} className="hover:bg-slate-50">
+                            <td className="py-2.5 px-4 font-mono font-bold text-slate-800">{s.date}</td>
+                            <td className="py-2.5 px-4 text-slate-700">{getDayNameEs(s.date)}</td>
+                            <td className="py-2.5 px-4 text-center font-bold">
+                              {isLibre ? 'Libre' : `Turno ${s.shiftCode}`}
+                            </td>
+                            <td className="py-2.5 px-4 text-center font-mono">{inTime}</td>
+                            <td className="py-2.5 px-4 text-center font-mono">{outTime}</td>
+                            <td className="py-2.5 px-4 text-center font-semibold">
+                              {isLibre ? '0.0' : att ? Number(att.workedDays).toFixed(1) : '1.0'}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono">
+                              {isLibre ? '0.0' : att ? Number(att.dayHours).toFixed(1) : s.shiftCode === 'T' ? '6.0' : '8.0'} hs
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold text-purple-700">
+                              {isLibre ? '0.0' : att ? Number(att.nightHours).toFixed(1) : s.shiftCode === 'T' ? '2.0' : s.shiftCode === 'N' ? '8.0' : '0.0'} hs
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                              {isLibre ? '0.0' : att ? Number(att.totalHours).toFixed(1) : '8.0'} hs
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-500 text-[11px] max-w-xs truncate">
+                              {att?.notes || att?.correctionReason || (isLibre ? 'Día Libre' : 'Validado en sede')}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="p-12 text-center bg-slate-50 space-y-3">
+              <div className="w-12 h-12 mx-auto rounded-full bg-slate-200 flex items-center justify-center text-slate-500">
+                <Users className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-slate-800">
+                No se encontró funcionario para mostrar historial
+              </h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No hay funcionarios que coincidan con la cuadrilla seleccionada. Modifique los filtros para visualizar la información.
+              </p>
+              <button
+                onClick={() => {
+                  setSelectedCrew('ALL');
+                  setSelectedUser('ALL');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-petroleum-700 text-white hover:bg-petroleum-800 transition"
+              >
+                Restablecer filtros
+              </button>
+            </div>
+          )
         )}
 
         {/* 4. COBERTURA DE TURNOS */}
@@ -724,58 +851,142 @@ export default function ReportsModulePage() {
         )}
 
         {/* 6. CIERRE DEL PERÍODO */}
-        {reportType === 'cierre' && (
-          <div className="p-6 space-y-4">
-            <div className="p-5 rounded-2xl bg-petroleum-50/80 border border-petroleum-200 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-petroleum-800 uppercase tracking-wider block">
-                  Acta de Liquidación Oficial
-                </span>
-                <h4 className="text-lg font-extrabold text-petroleum-950 mt-1">
-                  Cierre 1ª Quincena Noviembre 2026
-                </h4>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Del 01/11/2026 al 15/11/2026 | Estado: <strong>BORRADOR REVISADO</strong>
-                </p>
+        {reportType === 'cierre' && (() => {
+          const selectedClosure = closures.find((c) => c.id === selectedClosureId);
+          const isApproved = selectedClosure?.status === 'APROBADO';
+          const sData = selectedClosure?.summaryData || {};
+
+          let draftDays = 0;
+          let draftDayH = 0;
+          let draftNightH = 0;
+          let draftTotalH = 0;
+          attendances.forEach((a) => {
+            draftDays += a.workedDays;
+            draftDayH += a.dayHours;
+            draftNightH += a.nightHours;
+            draftTotalH += a.totalHours;
+          });
+
+          return (
+            <div className="p-6 space-y-5">
+              {/* Selector de Cierre Oficial */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Cierre Contable Seleccionado:
+                  </label>
+                  <select
+                    value={selectedClosureId}
+                    onChange={(e) => {
+                      const newId = e.target.value;
+                      setSelectedClosureId(newId);
+                      const found = closures.find((c) => c.id === newId);
+                      if (found) {
+                        setStartDate(found.startDate);
+                        setEndDate(found.endDate);
+                      }
+                    }}
+                    className="w-full md:w-96 rounded-xl border border-slate-300 p-2 text-xs bg-white font-semibold text-slate-800"
+                  >
+                    <option value="">-- Borrador por rango de fechas (No cerrado) --</option>
+                    {closures.map((cl) => (
+                      <option key={cl.id} value={cl.id}>
+                        {cl.name} ({cl.startDate} al {cl.endDate}) — [{cl.status}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  {selectedClosure ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold ${
+                        isApproved
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-amber-100 text-amber-800 border border-amber-300'
+                      }`}
+                    >
+                      {isApproved ? '✓ Cierre Aprobado e Inmutable' : '⚠️ Cierre en Borrador'}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-blue-100 text-blue-800 border border-blue-300">
+                      ℹ️ Borrador de Rango en Vivo
+                    </span>
+                  )}
+                </div>
               </div>
 
-              <div className="flex gap-2">
-                <a
-                  href={`/api/export/csv?startDate=${startDate}&endDate=${endDate}`}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white text-petroleum-900 border border-petroleum-300 hover:bg-slate-50 transition shadow-xs"
-                >
-                  Exportar CSV
-                </a>
-                <a
-                  href={`/api/export/pdf?reportType=cierre&startDate=${startDate}&endDate=${endDate}`}
-                  target="_blank"
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-petroleum-800 text-white hover:bg-petroleum-900 transition shadow-xs"
-                >
-                  Descargar Acta PDF
-                </a>
-              </div>
-            </div>
+              {/* Tarjeta del Cierre o Borrador */}
+              <div className="p-5 rounded-2xl bg-petroleum-50/80 border border-petroleum-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <span className="text-xs font-bold text-petroleum-800 uppercase tracking-wider block">
+                    {selectedClosure ? 'Acta de Liquidación Oficial' : 'Borrador Preliminar de Liquidación'}
+                  </span>
+                  <h4 className="text-lg font-extrabold text-petroleum-950 mt-1">
+                    {selectedClosure ? selectedClosure.name : `Borrador del Rango ${startDate} al ${endDate}`}
+                  </h4>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {selectedClosure
+                      ? `Del ${selectedClosure.startDate} al ${selectedClosure.endDate} | Estado: ${selectedClosure.status} | Aprobado: ${selectedClosure.approvedByName || 'Pendiente'}`
+                      : `Del ${startDate} al ${endDate} | ATENCIÓN: Valores preliminares sujetos a cambios`}
+                  </p>
+                </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Total Días</span>
-                <span className="text-2xl font-black text-petroleum-900">92.5</span>
+                <div className="flex gap-2">
+                  <a
+                    href={getCsvDownloadUrl()}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold bg-white text-petroleum-900 border border-petroleum-300 hover:bg-slate-50 transition shadow-xs"
+                  >
+                    Exportar CSV
+                  </a>
+                  <a
+                    href={getPdfDownloadUrl()}
+                    target="_blank"
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold bg-petroleum-800 text-white hover:bg-petroleum-900 transition shadow-xs"
+                  >
+                    Descargar Acta PDF
+                  </a>
+                </div>
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Horas Diurnas</span>
-                <span className="text-2xl font-black text-slate-800">546.0 hs</span>
-              </div>
-              <div className="p-4 rounded-xl bg-purple-50/60 border border-purple-200">
-                <span className="text-[10px] text-purple-700 font-bold uppercase block">Horas Noct. (+30%)</span>
-                <span className="text-2xl font-black text-purple-900">198.0 hs</span>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Total Horas</span>
-                <span className="text-2xl font-black text-slate-950">744.0 hs</span>
+
+              {/* Métricas del Cierre / Borrador */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Total Días</span>
+                  <span className="text-2xl font-black text-petroleum-900">
+                    {selectedClosure
+                      ? Number(sData.totalDaysWorked ?? 0).toFixed(1)
+                      : draftDays.toFixed(1)}
+                  </span>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Horas Diurnas</span>
+                  <span className="text-2xl font-black text-slate-800">
+                    {selectedClosure
+                      ? `${Number(sData.totalDayHours ?? 0).toFixed(1)} hs`
+                      : `${draftDayH.toFixed(1)} hs`}
+                  </span>
+                </div>
+                <div className="p-4 rounded-xl bg-purple-50/60 border border-purple-200">
+                  <span className="text-[10px] text-purple-700 font-bold uppercase block">Horas Noct. (+30%)</span>
+                  <span className="text-2xl font-black text-purple-900">
+                    {selectedClosure
+                      ? `${Number(sData.totalNightHours ?? 0).toFixed(1)} hs`
+                      : `${draftNightH.toFixed(1)} hs`}
+                  </span>
+                </div>
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block">Total Horas</span>
+                  <span className="text-2xl font-black text-slate-950">
+                    {selectedClosure
+                      ? `${Number(sData.totalHours ?? 0).toFixed(1)} hs`
+                      : `${draftTotalH.toFixed(1)} hs`}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

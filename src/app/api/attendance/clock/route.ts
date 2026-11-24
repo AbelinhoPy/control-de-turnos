@@ -73,6 +73,18 @@ export async function POST(request: Request) {
 
     // 6. Procesar Salida ('OUT')
     if (type === 'OUT') {
+      // 6.1. Verificar idempotencia primero si viene un token
+      if (idempotencyToken) {
+        const existingTokenAtt = await dbService.getAttendanceByIdempotencyToken(idempotencyToken);
+        if (existingTokenAtt && existingTokenAtt.userId === session.userId) {
+          return NextResponse.json({
+            success: true,
+            message: 'La marcación de salida ya había sido registrada exitosamente para esta jornada.',
+            attendance: existingTokenAtt,
+          });
+        }
+      }
+
       // Buscar primero jornada abierta (incluye turnos nocturnos iniciados ayer o jornadas de hoy)
       let targetAtt = await dbService.findOpenAttendance(session.userId);
 
@@ -81,11 +93,30 @@ export async function POST(request: Request) {
         targetAtt = await dbService.getAttendanceForUserAndDate(session.userId, todayStr);
       }
 
+      // Si aún no encuentra, verificar si corresponde a un turno nocturno de ayer que ya fue cerrado hoy en la mañana (reintento por pérdida de señal móvil)
       if (!targetAtt) {
+        const yesterdayDate = new Date(serverTimestamp.getTime() - 24 * 3600 * 1000);
+        const yesterdayStr = formatDateAsuncion(yesterdayDate);
+        const yesterdayAtt = await dbService.getAttendanceForUserAndDate(session.userId, yesterdayStr);
+        if (yesterdayAtt && yesterdayAtt.clockInTime && yesterdayAtt.clockOutTime) {
+          const diffHours = (serverTimestamp.getTime() - new Date(yesterdayAtt.clockOutTime).getTime()) / (1000 * 3600);
+          if (diffHours < 24) {
+            return NextResponse.json({
+              success: true,
+              message: 'La marcación de salida ya había sido registrada exitosamente para esta jornada nocturna.',
+              attendance: yesterdayAtt,
+            });
+          }
+        }
+      }
+
+      // La salida nunca debe registrarse sin una entrada previa válida; si falta la entrada, derivar a revisión
+      if (!targetAtt || !targetAtt.clockInTime) {
         return NextResponse.json(
           {
-            error: 'No se encontró una marcación de entrada previa activa para cerrar la jornada. Si olvidó marcar entrada, solicite una revisión administrativa.',
+            error: 'No se puede registrar salida sin una marcación de entrada previa válida. La jornada ha sido derivada a revisión administrativa.',
             canRequestReview: true,
+            needsReview: true,
           },
           { status: 400 }
         );
