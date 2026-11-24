@@ -1,6 +1,7 @@
 // src/db/seed.ts
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-http';
 import { drizzle as drizzleNodePg } from 'drizzle-orm/node-postgres';
+import { like, inArray } from 'drizzle-orm';
 import { neon } from '@neondatabase/serverless';
 import { Pool } from 'pg';
 import * as schema from './schema';
@@ -139,18 +140,12 @@ async function seed() {
     ])
     .onConflictDoNothing();
 
-  // Generación segura de contraseña para el primer administrador
-  let adminPassword = process.env.INITIAL_ADMIN_PASSWORD || process.argv[2];
-  let isGenerated = false;
-
-  if (!adminPassword) {
-    adminPassword = crypto.randomBytes(12).toString('base64url');
-    isGenerated = true;
-  }
-
+  // Contraseña estándar para entrega y operación inicial
+  const defaultPassword = process.env.INITIAL_ADMIN_PASSWORD || 'Control2026!';
   const salt = bcrypt.genSaltSync(10);
-  const passwordHash = bcrypt.hashSync(adminPassword, salt);
+  const passwordHash = bcrypt.hashSync(defaultPassword, salt);
 
+  // 1. Administrador General
   await db
     .insert(schema.users)
     .values({
@@ -160,22 +155,228 @@ async function seed() {
       email: 'aldo.samudio@empresa.com.py',
       passwordHash,
       role: 'ADMIN',
+      documentNumber: '1.234.567',
+      phone: '+595 981 100 200',
+      baseDailyWage: 0,
       isActive: true,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: schema.users.id,
+      set: { passwordHash, isActive: true, role: 'ADMIN' },
+    });
+
+  // 2. Personal Operativo de las 4 Cuadrillas
+  const operationalStaff = [
+    // Cuadrilla A (Mañana Fijo 06:00 a 14:00)
+    {
+      id: 'user_p1',
+      organizationId: orgId,
+      name: 'Porfirio Giménez',
+      email: 'porfirio.gimenez@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_a',
+      documentNumber: '3.456.789',
+      phone: '+595 981 200 301',
+      baseDailyWage: 120000,
+      isActive: true,
+    },
+    {
+      id: 'user_p2',
+      organizationId: orgId,
+      name: 'David Rojas',
+      email: 'david.rojas@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_a',
+      documentNumber: '4.123.456',
+      phone: '+595 981 200 302',
+      baseDailyWage: 120000,
+      isActive: true,
+    },
+    // Cuadrilla B (Tarde Fijo 14:00 a 22:00)
+    {
+      id: 'user_p3',
+      organizationId: orgId,
+      name: 'Rubén Cáceres',
+      email: 'ruben.caceres@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_b',
+      documentNumber: '2.987.654',
+      phone: '+595 981 200 303',
+      baseDailyWage: 120000,
+      isActive: true,
+    },
+    {
+      id: 'user_p4',
+      organizationId: orgId,
+      name: 'Mario Ayala',
+      email: 'mario.ayala@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_b',
+      documentNumber: '3.789.012',
+      phone: '+595 981 200 304',
+      baseDailyWage: 120000,
+      isActive: true,
+    },
+    // Cuadrilla C (Noche Fijo 22:00 a 06:00)
+    {
+      id: 'user_p5',
+      organizationId: orgId,
+      name: 'Darío Fernández',
+      email: 'dario.fernandez@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_c',
+      documentNumber: '4.567.890',
+      phone: '+595 981 200 305',
+      baseDailyWage: 130000,
+      isActive: true,
+    },
+    {
+      id: 'user_p6',
+      organizationId: orgId,
+      name: 'Ariel Martínez',
+      email: 'ariel.martinez@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_c',
+      documentNumber: '5.123.789',
+      phone: '+595 981 200 306',
+      baseDailyWage: 130000,
+      isActive: true,
+    },
+    // Cuadrilla D (Volante Rotativo 2M-2T-2N-2L)
+    {
+      id: 'user_p7',
+      organizationId: orgId,
+      name: 'Edgar Romero',
+      email: 'edgar.romero@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_d',
+      documentNumber: '3.654.321',
+      phone: '+595 981 200 307',
+      baseDailyWage: 125000,
+      isActive: true,
+    },
+    {
+      id: 'user_p8',
+      organizationId: orgId,
+      name: 'Marcelo Benítez',
+      email: 'marcelo.benitez@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_d',
+      documentNumber: '4.890.123',
+      phone: '+595 981 200 308',
+      baseDailyWage: 125000,
+      isActive: true,
+    },
+    // Funcionario de ejemplo dado de baja (conserva historial)
+    {
+      id: 'user_p9_desactivado',
+      organizationId: orgId,
+      name: 'Carlos Duarte (Baja)',
+      email: 'carlos.duarte@empresa.com.py',
+      passwordHash,
+      role: 'FUNCIONARIO' as const,
+      crewId: 'crew_a',
+      documentNumber: '2.345.678',
+      phone: '+595 981 200 309',
+      baseDailyWage: 110000,
+      isActive: false,
+    },
+  ];
+
+  for (const staff of operationalStaff) {
+    await db
+      .insert(schema.users)
+      .values(staff)
+      .onConflictDoUpdate({
+        target: schema.users.id,
+        set: {
+          name: staff.name,
+          email: staff.email,
+          passwordHash: staff.passwordHash,
+          crewId: staff.crewId,
+          documentNumber: staff.documentNumber,
+          phone: staff.phone,
+          baseDailyWage: staff.baseDailyWage,
+          isActive: staff.isActive,
+        },
+      });
+  }
+
+  // 3. Generar turnos publicados para el mes actual (noviembre 2026)
+  const currentYear = 2026;
+  const currentMonth = 11;
+  const daysInMonth = 30;
+
+  for (const staff of operationalStaff.filter((s) => s.isActive)) {
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      let templateId = 'shift_m';
+
+      if (staff.crewId === 'crew_a') {
+        templateId = 'shift_m';
+      } else if (staff.crewId === 'crew_b') {
+        templateId = 'shift_t';
+      } else if (staff.crewId === 'crew_c') {
+        templateId = 'shift_n';
+      } else if (staff.crewId === 'crew_d') {
+        // Volante rotativo: ciclo de 8 días (2M, 2T, 2N, 2L)
+        const cycleDay = (day - 1) % 8;
+        if (cycleDay < 2) templateId = 'shift_m';
+        else if (cycleDay < 4) templateId = 'shift_t';
+        else if (cycleDay < 6) templateId = 'shift_n';
+        else templateId = 'shift_l';
+      }
+
+      await db
+        .insert(schema.shifts)
+        .values({
+          id: `shift_${staff.id}_${dateStr}`,
+          organizationId: orgId,
+          userId: staff.id,
+          crewId: staff.crewId,
+          shiftTemplateId: templateId,
+          date: dateStr,
+          isPublished: true,
+          publishedAt: new Date(),
+        })
+        .onConflictDoNothing();
+    }
+  }
+
+  // 4. Limpieza de usuarios temporales de tests
+  try {
+    const testUsers = await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(like(schema.users.email, '%_1795%'));
+
+    if (testUsers.length > 0) {
+      const testIds = testUsers.map((u: any) => u.id);
+      await db.delete(schema.auditLogs).where(inArray(schema.auditLogs.userId, testIds));
+      await db.delete(schema.attendanceIncidents).where(inArray(schema.attendanceIncidents.userId, testIds));
+      await db.delete(schema.attendances).where(inArray(schema.attendances.userId, testIds));
+      await db.delete(schema.shifts).where(inArray(schema.shifts.userId, testIds));
+      await db.delete(schema.users).where(inArray(schema.users.id, testIds));
+    }
+  } catch (cleanErr) {
+    console.warn('Advertencia durante limpieza de tests:', cleanErr);
+  }
 
   if (pool) {
     await pool.end();
   }
 
   console.log(`✅ Base de datos inicializada exitosamente.`);
-  console.log(`👤 Administrador: Aldo Samudio (aldo.samudio@empresa.com.py)`);
-  if (isGenerated) {
-    console.log(`🔑 Contraseña generada automáticamente: ${adminPassword}`);
-    console.log(`⚠️  Guarde esta contraseña ahora. No se volverá a mostrar.`);
-  } else {
-    console.log(`🔑 Contraseña configurada mediante variable de entorno / parámetro.`);
-  }
+  console.log(`👤 Administrador: Aldo Samudio (aldo.samudio@empresa.com.py) | Clave: ${defaultPassword}`);
+  console.log(`👥 Funcionarios activos sembrados: ${operationalStaff.filter((s) => s.isActive).length} funcionarios con turnos publicados.`);
 }
 
 seed().catch((err) => {

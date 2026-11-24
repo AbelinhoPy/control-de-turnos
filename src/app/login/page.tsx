@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Shield, Clock, MapPin, CheckCircle2, AlertCircle, ArrowRight, UserCheck } from 'lucide-react';
+import { Clock, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,20 +11,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(
-    process.env.NEXT_PUBLIC_ENABLE_DEMO === 'true' || process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE === 'true'
-  );
-
-  useEffect(() => {
-    fetch('/api/auth/login')
-      .then((res) => res.json())
-      .then((data) => {
-        if (typeof data.isDemoMode === 'boolean') {
-          setIsDemoMode(data.isDemoMode);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,12 +37,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickDemo = (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword('Control2026!');
-    setError(null);
   };
 
   return (
@@ -141,64 +121,6 @@ export default function LoginPage() {
               </button>
             </div>
           </form>
-
-          {/* Quick Demo Access Bar (Solo visible en modo Demo explícito) */}
-          {isDemoMode && (
-            <div className="mt-6 pt-6 border-t border-slate-100">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 text-center mb-3">
-                Accesos rápidos para demostración
-              </p>
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickDemo('aldo.samudio@empresa.com.py')}
-                  className="w-full text-left p-2.5 rounded-xl border border-petroleum-100 bg-petroleum-50/60 hover:bg-petroleum-100/70 transition-colors flex items-center justify-between text-xs"
-                >
-                  <div>
-                    <span className="font-semibold text-petroleum-900 block">
-                      Aldo Samudio (Administrador)
-                    </span>
-                    <span className="text-slate-500 text-[11px]">aldo.samudio@empresa.com.py</span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-petroleum-700 text-white font-medium text-[10px]">
-                    Admin
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickDemo('porfirio.gimenez@demo.com')}
-                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors flex items-center justify-between text-xs"
-                >
-                  <div>
-                    <span className="font-semibold text-slate-800 block">
-                      Porfirio Giménez (Funcionario Mañana)
-                    </span>
-                    <span className="text-slate-500 text-[11px]">porfirio.gimenez@demo.com</span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium text-[10px]">
-                    Equipo A
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleQuickDemo('edgar.romero@demo.com')}
-                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors flex items-center justify-between text-xs"
-                >
-                  <div>
-                    <span className="font-semibold text-slate-800 block">
-                      Edgar Romero (Funcionario Volante)
-                    </span>
-                    <span className="text-slate-500 text-[11px]">edgar.romero@demo.com</span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium text-[10px]">
-                    Volante
-                  </span>
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Footer info */}
