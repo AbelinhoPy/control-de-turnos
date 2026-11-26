@@ -129,7 +129,12 @@ export const attendances = pgTable('attendances', {
   // Prevención de duplicados
   idempotencyToken: text('idempotency_token'),
   notes: text('notes'),
-  
+
+  // Anti-GPS falso: score de riesgo calculado en el servidor al momento de la marcación
+  // 0 = sin señales, 100 = altamente sospechoso. No bloquea al funcionario, alerta al admin.
+  gpsRiskScore: integer('gps_risk_score').default(0),
+  gpsRiskFlags: text('gps_risk_flags'), // JSON array serializado de GpsRiskFlag[]
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [

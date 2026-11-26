@@ -107,6 +107,8 @@ export interface AttendanceData {
   correctedAt?: string | null;
   idempotencyToken?: string | null;
   notes?: string | null;
+  gpsRiskScore?: number | null;
+  gpsRiskFlags?: string | null;
 }
 
 export interface AttendanceIncidentData {

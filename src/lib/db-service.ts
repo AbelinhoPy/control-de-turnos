@@ -599,6 +599,8 @@ export class DatabaseService {
       correctedAt: att.correctedAt ? att.correctedAt.toISOString() : null,
       idempotencyToken: att.idempotencyToken,
       notes: att.notes,
+      gpsRiskScore: att.gpsRiskScore ?? 0,
+      gpsRiskFlags: att.gpsRiskFlags ?? null,
     };
   }
 
@@ -762,6 +764,8 @@ export class DatabaseService {
     status: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
     photo?: string | null;
     idempotencyToken?: string;
+    gpsRiskScore?: number;
+    gpsRiskFlags?: string | null;
   }): Promise<AttendanceData> {
     assertDatabaseAvailable();
     if (!isDatabaseConnected() && isDemoModeEnabled()) {
@@ -808,6 +812,8 @@ export class DatabaseService {
       totalHours: '0',
       isManualCorrection: false,
       idempotencyToken: params.idempotencyToken,
+      gpsRiskScore: params.gpsRiskScore ?? 0,
+      gpsRiskFlags: params.gpsRiskFlags ?? null,
       createdAt: now,
       updatedAt: now,
     });
@@ -824,6 +830,8 @@ export class DatabaseService {
         lng: params.lng,
         accuracy: params.accuracy,
         distanceMeters: params.distanceMeters,
+        gpsRiskScore: params.gpsRiskScore ?? 0,
+        gpsRiskFlags: params.gpsRiskFlags ?? null,
       },
       createdAt: now,
     });
@@ -841,6 +849,8 @@ export class DatabaseService {
     status: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
     photo?: string | null;
     idempotencyToken?: string;
+    gpsRiskScore?: number;
+    gpsRiskFlags?: string | null;
   }): Promise<AttendanceData> {
     assertDatabaseAvailable();
     if (!isDatabaseConnected() && isDemoModeEnabled()) {
@@ -882,6 +892,13 @@ export class DatabaseService {
         totalHours: calc.totalHours.toString(),
         status: 'COMPLETA',
         idempotencyToken: params.idempotencyToken || existing.idempotencyToken,
+        // Guardamos el score más alto entre entrada y salida para que el admin vea el peor caso
+        ...(params.gpsRiskScore !== undefined && params.gpsRiskScore > 0
+          ? {
+              gpsRiskScore: params.gpsRiskScore,
+              ...(params.gpsRiskFlags ? { gpsRiskFlags: params.gpsRiskFlags } : {}),
+            }
+          : {}),
         updatedAt: now,
       })
       .where(

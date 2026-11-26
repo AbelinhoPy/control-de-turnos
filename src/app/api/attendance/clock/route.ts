@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { dbService } from '@/lib/db-service';
 import { validateGeofence } from '@/lib/geo/geofence';
+import { analyzeGpsRisk } from '@/lib/geo/gpsAntiSpoof';
 import { formatDateAsuncion, getNowInAsuncion } from '@/lib/time/timezone';
 
 export async function POST(request: Request) {
@@ -88,6 +89,29 @@ export async function POST(request: Request) {
     const serverTimestamp = getNowInAsuncion();
     const todayStr = formatDateAsuncion(serverTimestamp);
 
+    // 5.1. Análisis anti-GPS falso (no bloquea, solo asigna score de riesgo)
+    // Buscamos la última marcación del funcionario para detectar velocidad imposible
+    const lastAtt = await dbService.findOpenAttendance(session.userId)
+      ?? await dbService.getAttendanceForUserAndDate(session.userId, todayStr);
+
+    const antiSpoofResult = analyzeGpsRisk({
+      lat,
+      lng,
+      accuracy,
+      workplaceLat: org.workplaceLat,
+      workplaceLng: org.workplaceLng,
+      lastClockTimestamp: lastAtt?.clockInTime ? new Date(lastAtt.clockInTime) : null,
+      lastClockLat:       lastAtt?.clockInLat  ?? null,
+      lastClockLng:       lastAtt?.clockInLng  ?? null,
+    });
+
+    // Si el riesgo es alto lo logueamos en consola para trazabilidad (el score se guarda en BD)
+    if (antiSpoofResult.isHighRisk) {
+      console.warn(
+        `[AntiSpoof] Alerta GPS usuario ${session.userId} — score ${antiSpoofResult.riskScore}/100: ${antiSpoofResult.summary}`
+      );
+    }
+
     // 6. Procesar Salida ('OUT')
     if (type === 'OUT') {
       // 6.1. Verificar idempotencia primero si viene un token
@@ -169,6 +193,8 @@ export async function POST(request: Request) {
         status: 'VALID',
         photo: sanitizedPhoto,
         idempotencyToken,
+        gpsRiskScore: antiSpoofResult.riskScore,
+        gpsRiskFlags: antiSpoofResult.flags.length > 0 ? JSON.stringify(antiSpoofResult.flags) : null,
       });
 
       return NextResponse.json({
@@ -251,12 +277,15 @@ export async function POST(request: Request) {
       shiftId: currentShift.id,
       photo: sanitizedPhoto,
       idempotencyToken,
+      gpsRiskScore: antiSpoofResult.riskScore,
+      gpsRiskFlags: antiSpoofResult.flags.length > 0 ? JSON.stringify(antiSpoofResult.flags) : null,
     });
 
     return NextResponse.json({
       success: true,
       message: 'Marcación de entrada registrada exitosamente.',
       attendance: att,
+      gpsRiskScore: antiSpoofResult.riskScore,
     });
   } catch (error: any) {
     if (error?.code === 'DB_NOT_CONFIGURED') {

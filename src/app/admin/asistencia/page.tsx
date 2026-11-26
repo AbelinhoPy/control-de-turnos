@@ -17,6 +17,7 @@ import {
   Sparkles,
   Camera,
   X,
+  ShieldAlert,
 } from 'lucide-react';
 import { formatTimeAsuncion, getDayNameEs, getCurrentDateAsuncion } from '@/lib/time/timezone';
 
@@ -45,6 +46,8 @@ interface EnrichedAttendance {
   correctedByName?: string | null;
   correctedAt?: string | null;
   notes?: string | null;
+  gpsRiskScore?: number | null;
+  gpsRiskFlags?: string | null;
 }
 
 interface CrewItem {
@@ -285,6 +288,7 @@ export default function AttendanceControlPage() {
                 <th className="py-3 px-4 text-center">Horas Diurnas</th>
                 <th className="py-3 px-4 text-center">Horas Nocturnas (+30%)</th>
                 <th className="py-3 px-4 text-center">Estado</th>
+                <th className="py-3 px-4 text-center">GPS</th>
                 <th className="py-3 px-4">Auditoría / Observaciones</th>
                 <th className="py-3 px-4 text-right">Acción</th>
               </tr>
@@ -292,7 +296,7 @@ export default function AttendanceControlPage() {
             <tbody className="divide-y divide-slate-100">
               {filteredAttendances.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-slate-400">
+                  <td colSpan={12} className="py-8 text-center text-slate-400">
                     No se encontraron registros de asistencia para los filtros seleccionados.
                   </td>
                 </tr>
@@ -417,6 +421,56 @@ export default function AttendanceControlPage() {
                         {Number(att.nightHours).toFixed(1)} hs
                       </td>
                       <td className="py-3.5 px-4 text-center">{badge}</td>
+                      {/* ── Badge Anti-GPS falso ───────────────────────── */}
+                      <td className="py-3.5 px-4 text-center">
+                        {(() => {
+                          const score = att.gpsRiskScore ?? 0;
+                          if (score === 0) {
+                            return (
+                              <span className="text-[10px] text-slate-300 font-medium">—</span>
+                            );
+                          }
+                          let flags: string[] = [];
+                          try {
+                            flags = att.gpsRiskFlags ? JSON.parse(att.gpsRiskFlags) : [];
+                          } catch {}
+
+                          const flagLabels: Record<string, string> = {
+                            PERFECT_ACCURACY:    'Precisión GPS exacta (0-1m)',
+                            ROUNDED_COORDINATES: 'Coordenadas redondeadas',
+                            EXACT_WORKPLACE_MATCH: 'Coordenadas = pin de sede',
+                            IMPOSSIBLE_SPEED:    'Velocidad imposible',
+                            STATIC_COORDINATES:  'Coordenadas estáticas',
+                          };
+
+                          const tooltipText = flags.length > 0
+                            ? flags.map((f) => flagLabels[f] || f).join('\n')
+                            : `Score: ${score}/100`;
+
+                          if (score >= 50) {
+                            return (
+                              <button
+                                type="button"
+                                title={`⚠️ GPS sospechoso (${score}/100)\n${tooltipText}`}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200 hover:bg-rose-200 transition cursor-help"
+                              >
+                                <ShieldAlert className="w-3 h-3 flex-shrink-0" />
+                                {score}/100
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              type="button"
+                              title={`GPS con señales leves (${score}/100)\n${tooltipText}`}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition cursor-help"
+                            >
+                              <ShieldAlert className="w-3 h-3 flex-shrink-0" />
+                              {score}/100
+                            </button>
+                          );
+                        })()}
+                      </td>
                       <td className="py-3.5 px-4 text-slate-500 text-[11px] max-w-xs truncate">
                         {att.isManualCorrection ? (
                           <span className="text-amber-800 font-medium">
