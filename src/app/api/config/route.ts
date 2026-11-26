@@ -38,6 +38,7 @@ export async function POST(request: Request) {
       nightSurchargePercent,
       halfDayRuleConfirmed,
       hourlyRateRuleConfirmed,
+      requirePhotoOnClock,
     } = body;
 
     const updated = await dbService.updateOrganization(session.organizationId, {
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
       nightSurchargePercent: nightSurchargePercent !== undefined ? Number(nightSurchargePercent) : undefined,
       halfDayRuleConfirmed: halfDayRuleConfirmed !== undefined ? Boolean(halfDayRuleConfirmed) : undefined,
       hourlyRateRuleConfirmed: hourlyRateRuleConfirmed !== undefined ? Boolean(hourlyRateRuleConfirmed) : undefined,
+      requirePhotoOnClock: requirePhotoOnClock !== undefined ? Boolean(requirePhotoOnClock) : undefined,
     });
 
     return NextResponse.json({

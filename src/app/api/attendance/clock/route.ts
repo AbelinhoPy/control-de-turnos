@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { lat, lng, accuracy, type, idempotencyToken } = body;
+    const { lat, lng, accuracy, type, idempotencyToken, photo } = body;
 
     // 1. Validar tipo de marcación
     if (type !== 'IN' && type !== 'OUT') {
@@ -43,6 +43,23 @@ export async function POST(request: Request) {
     }
 
     const org = await dbService.getOrganization(session.organizationId);
+
+    // 3.1. Validar fotografía si viene en el payload o si es obligatoria por configuración
+    const isValidPhotoFormat =
+      typeof photo === 'string' &&
+      /^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(photo) &&
+      photo.length <= 500_000;
+    const sanitizedPhoto = isValidPhotoFormat ? photo : null;
+
+    if (photo !== undefined && photo !== null && !isValidPhotoFormat) {
+      return NextResponse.json(
+        {
+          error: 'La fotografía enviada no tiene un formato válido o supera el tamaño permitido.',
+          canRequestReview: true,
+        },
+        { status: 400 }
+      );
+    }
 
     // 4. Validar Geofencing con la precisión informada
     const geoValidation = validateGeofence(
@@ -131,6 +148,17 @@ export async function POST(request: Request) {
         });
       }
 
+      if (org.requirePhotoOnClock && !sanitizedPhoto) {
+        return NextResponse.json(
+          {
+            error: 'La empresa exige una fotografía en vivo para registrar la salida. Capturá tu selfie e intentá nuevamente.',
+            canRequestReview: true,
+            requiresPhoto: true,
+          },
+          { status: 400 }
+        );
+      }
+
       const updated = await dbService.recordClockOut({
         attendanceId: targetAtt.id,
         timestamp: serverTimestamp,
@@ -139,6 +167,7 @@ export async function POST(request: Request) {
         accuracy,
         distanceMeters: geoValidation.distanceMeters,
         status: 'VALID',
+        photo: sanitizedPhoto,
         idempotencyToken,
       });
 
@@ -198,6 +227,17 @@ export async function POST(request: Request) {
       );
     }
 
+    if (org.requirePhotoOnClock && !sanitizedPhoto) {
+      return NextResponse.json(
+        {
+          error: 'La empresa exige una fotografía en vivo para registrar la entrada. Capturá tu selfie e intentá nuevamente.',
+          canRequestReview: true,
+          requiresPhoto: true,
+        },
+        { status: 400 }
+      );
+    }
+
     const att = await dbService.recordClockIn({
       userId: session.userId,
       organizationId: session.organizationId,
@@ -209,6 +249,7 @@ export async function POST(request: Request) {
       distanceMeters: geoValidation.distanceMeters,
       status: 'VALID',
       shiftId: currentShift.id,
+      photo: sanitizedPhoto,
       idempotencyToken,
     });
 

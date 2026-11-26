@@ -16,6 +16,7 @@ export interface OrgData {
   geofenceRadiusMeters: number;
   halfDayRuleConfirmed: boolean;
   hourlyRateRuleConfirmed: boolean;
+  requirePhotoOnClock: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,12 +87,14 @@ export interface AttendanceData {
   clockInAccuracy?: number | null;
   clockInDistanceMeters?: number | null;
   clockInStatus?: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
+  clockInPhoto?: string | null;
   clockOutTime?: string | null; // ISO timestamptz
   clockOutLat?: number | null;
   clockOutLng?: number | null;
   clockOutAccuracy?: number | null;
   clockOutDistanceMeters?: number | null;
   clockOutStatus?: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
+  clockOutPhoto?: string | null;
   workedDays: number; // 1.0, 0.5, 0
   dayHours: number;
   nightHours: number;
@@ -213,6 +216,7 @@ class DataStoreManager {
       geofenceRadiusMeters: 300,
       halfDayRuleConfirmed: false,
       hourlyRateRuleConfirmed: false,
+      requirePhotoOnClock: true,
       createdAt: '2026-11-01T00:00:00Z',
       updatedAt: '2026-11-21T18:00:00Z',
     };
@@ -964,6 +968,7 @@ class DataStoreManager {
     distanceMeters: number;
     status: 'VALID' | 'GEOFENCE_WARNING';
     shiftId?: string | null;
+    photo?: string | null;
     idempotencyToken?: string;
   }): AttendanceData {
     // Verificar idempotencia
@@ -984,6 +989,7 @@ class DataStoreManager {
       existingAtt.clockInAccuracy = params.accuracy;
       existingAtt.clockInDistanceMeters = params.distanceMeters;
       existingAtt.clockInStatus = params.status;
+      if (params.photo) existingAtt.clockInPhoto = params.photo;
       existingAtt.status = 'EN_CURSO';
       existingAtt.idempotencyToken = params.idempotencyToken;
       return existingAtt;
@@ -1001,6 +1007,7 @@ class DataStoreManager {
       clockInAccuracy: params.accuracy,
       clockInDistanceMeters: params.distanceMeters,
       clockInStatus: params.status,
+      clockInPhoto: params.photo ?? null,
       workedDays: 0,
       dayHours: 0,
       nightHours: 0,
@@ -1021,6 +1028,7 @@ class DataStoreManager {
     accuracy: number;
     distanceMeters: number;
     status: 'VALID' | 'GEOFENCE_WARNING';
+    photo?: string | null;
     idempotencyToken?: string;
   }): AttendanceData {
     const att = this.attendances.find((a) => a.id === params.attendanceId);
@@ -1043,6 +1051,7 @@ class DataStoreManager {
     att.clockOutAccuracy = params.accuracy;
     att.clockOutDistanceMeters = params.distanceMeters;
     att.clockOutStatus = params.status;
+    if (params.photo) att.clockOutPhoto = params.photo;
     if (params.idempotencyToken) {
       att.idempotencyToken = params.idempotencyToken;
     }

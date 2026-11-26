@@ -11,6 +11,7 @@ import {
   Save,
   Building,
   ShieldAlert,
+  Camera,
 } from 'lucide-react';
 
 export default function ConfigPage() {
@@ -28,6 +29,7 @@ export default function ConfigPage() {
   const [nightSurchargePercent, setNightSurchargePercent] = useState(30);
   const [halfDayRuleConfirmed, setHalfDayRuleConfirmed] = useState(false);
   const [hourlyRateRuleConfirmed, setHourlyRateRuleConfirmed] = useState(false);
+  const [requirePhotoOnClock, setRequirePhotoOnClock] = useState(true);
 
   useEffect(() => {
     fetch('/api/config')
@@ -44,6 +46,7 @@ export default function ConfigPage() {
           setNightSurchargePercent(org.nightSurchargePercent || 30);
           setHalfDayRuleConfirmed(Boolean(org.halfDayRuleConfirmed));
           setHourlyRateRuleConfirmed(Boolean(org.hourlyRateRuleConfirmed));
+          setRequirePhotoOnClock(org.requirePhotoOnClock !== false);
         }
         setLoading(false);
       });
@@ -68,6 +71,7 @@ export default function ConfigPage() {
           nightSurchargePercent,
           halfDayRuleConfirmed,
           hourlyRateRuleConfirmed,
+          requirePhotoOnClock,
         }),
       });
 
@@ -267,6 +271,44 @@ export default function ConfigPage() {
               <strong>Nota importante:</strong> Mientras estas dos reglas no estén expresamente confirmadas por el administrador, los reportes mostrarán días y horas con exactitud matemática, pero marcarán los importes finales en guaraníes como <em>«Pendiente de configuración»</em>.
             </p>
           )}
+        </div>
+
+        {/* 4. Verificación Fotográfica en Marcaciones */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+            <Camera className="w-5 h-5 text-petroleum-800" />
+            <h3 className="text-sm font-bold text-slate-900">
+              Control de Identidad y Evidencia Fotográfica
+            </h3>
+          </div>
+
+          <label className="flex items-center justify-between gap-4 p-4 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+            <div className="text-xs space-y-1">
+              <span className="font-bold text-slate-900 block">
+                Exigir fotografía en vivo al marcar Entrada y Salida
+              </span>
+              <span className="text-slate-500 block">
+                Cuando está activo, el funcionario debe capturar una selfie con la cámara frontal de su celular antes de registrar su ingreso o salida. Ayuda a prevenir suplantaciones y el uso indebido de ubicación simulada.
+              </span>
+            </div>
+            <div className="flex-shrink-0 flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={requirePhotoOnClock}
+                onChange={(e) => setRequirePhotoOnClock(e.target.checked)}
+                className="w-5 h-5 rounded text-petroleum-700 focus:ring-petroleum-600"
+              />
+              <span
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${
+                  requirePhotoOnClock
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {requirePhotoOnClock ? 'Activo' : 'Desactivado'}
+              </span>
+            </div>
+          </label>
         </div>
 
         <button

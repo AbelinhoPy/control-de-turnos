@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import {
   MapPin,
@@ -14,6 +14,8 @@ import {
   Send,
   Calendar,
   ShieldCheck,
+  Camera,
+  X,
 } from 'lucide-react';
 import { getCurrentDateAsuncion, formatDateAsuncion } from '@/lib/time/timezone';
 
@@ -44,6 +46,7 @@ export default function FuncionarioMobilePage() {
     lat: number;
     lng: number;
     radius: number;
+    requirePhotoOnClock: boolean;
   } | null>(null);
 
   // Estados de marcación
@@ -60,6 +63,13 @@ export default function FuncionarioMobilePage() {
   const [reviewDescription, setReviewDescription] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
+
+  // Modal Cámara en vivo para verificación fotográfica
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Idempotency token para prevenir doble toque
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() =>
@@ -84,6 +94,7 @@ export default function FuncionarioMobilePage() {
           lat: meData.organization.workplaceLat,
           lng: meData.organization.workplaceLng,
           radius: meData.organization.geofenceRadiusMeters,
+          requirePhotoOnClock: meData.organization.requirePhotoOnClock !== false,
         });
       }
 
@@ -154,7 +165,76 @@ export default function FuncionarioMobilePage() {
 
   useEffect(() => {
     loadCurrentStatus();
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
   }, []);
+
+  const stopCameraStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setCameraReady(false);
+  };
+
+  const openCameraModal = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setCanRequestReview(false);
+    setCameraError(null);
+    setCameraReady(false);
+    setIsCameraModalOpen(true);
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError('Tu navegador no permite acceder a la cámara en vivo.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+      setCameraReady(true);
+    } catch {
+      setCameraError(
+        'No se pudo activar la cámara frontal. Verificá los permisos de cámara del navegador o solicitá una revisión administrativa.'
+      );
+    }
+  };
+
+  const capturePhotoAndClock = () => {
+    if (!videoRef.current || !cameraReady) return;
+    const video = videoRef.current;
+    const width = video.videoWidth || 360;
+    const height = video.videoHeight || 360;
+    const maxDim = 360;
+    const scale = Math.min(1, maxDim / Math.max(width, height));
+    const targetW = Math.max(160, Math.round(width * scale));
+    const targetH = Math.max(160, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, targetW, targetH);
+    const compressedJpeg = canvas.toDataURL('image/jpeg', 0.6);
+
+    stopCameraStream();
+    setIsCameraModalOpen(false);
+    triggerGeolocationCheck(compressedJpeg);
+  };
 
   // Determinar siguiente acción requerida
   const isWorking = attendance.status === 'EN_CURSO';
@@ -163,7 +243,12 @@ export default function FuncionarioMobilePage() {
   const nextActionType = isWorking ? 'OUT' : 'IN';
   const nextActionLabel = isWorking ? 'Marcar Salida' : 'Marcar Entrada';
 
-  const sendAttendanceCoordinates = async (latitude: number, longitude: number, accuracy: number) => {
+  const sendAttendanceCoordinates = async (
+    latitude: number,
+    longitude: number,
+    accuracy: number,
+    photoDataUrl?: string | null
+  ) => {
     setLocating(true);
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -178,6 +263,7 @@ export default function FuncionarioMobilePage() {
           lng: longitude,
           accuracy,
           type: nextActionType,
+          photo: photoDataUrl || undefined,
           idempotencyToken: idempotencyKey,
         }),
       });
@@ -200,7 +286,15 @@ export default function FuncionarioMobilePage() {
     }
   };
 
-  const triggerGeolocationCheck = () => {
+  const handleClockButtonClick = () => {
+    if (orgWorkplace?.requirePhotoOnClock !== false) {
+      openCameraModal();
+    } else {
+      triggerGeolocationCheck(null);
+    }
+  };
+
+  const triggerGeolocationCheck = (photoDataUrl?: string | null) => {
     setErrorMessage(null);
     setSuccessMessage(null);
     setCanRequestReview(false);
@@ -218,7 +312,7 @@ export default function FuncionarioMobilePage() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude, accuracy } = pos.coords;
-        sendAttendanceCoordinates(latitude, longitude, accuracy);
+        sendAttendanceCoordinates(latitude, longitude, accuracy, photoDataUrl);
       },
       (err) => {
         setLocating(false);
@@ -372,7 +466,7 @@ export default function FuncionarioMobilePage() {
 
           <div className="pt-2 flex items-center gap-2">
             <button
-              onClick={triggerGeolocationCheck}
+              onClick={handleClockButtonClick}
               className="px-3 py-1.5 rounded-xl bg-white border border-rose-300 font-semibold text-rose-800 hover:bg-rose-100/50 transition flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" />
@@ -408,7 +502,7 @@ export default function FuncionarioMobilePage() {
       {!isDayOff && !isCompleted && (
         <div className="pt-2 pb-2">
           <button
-            onClick={triggerGeolocationCheck}
+            onClick={handleClockButtonClick}
             disabled={locating}
             className={`w-full py-6 px-4 rounded-3xl font-extrabold text-lg text-white shadow-lg transition-all transform active:scale-98 flex flex-col items-center justify-center gap-2 disabled:opacity-50 ${
               isWorking
@@ -419,13 +513,19 @@ export default function FuncionarioMobilePage() {
             <div className="w-12 h-12 rounded-2xl bg-white/10 flex items-center justify-center">
               {locating ? (
                 <RefreshCw className="w-6 h-6 animate-spin text-cyan-300" />
+              ) : orgWorkplace?.requirePhotoOnClock !== false ? (
+                <Camera className="w-6 h-6 text-white" />
               ) : (
                 <Navigation className="w-6 h-6 text-white" />
               )}
             </div>
             <span>{locating ? 'Verificando GPS en sede...' : nextActionLabel}</span>
             <span className="text-[11px] font-medium text-white/70">
-              {locating ? 'Por favor aguardá unos segundos' : 'Toca para verificar ubicación y marcar'}
+              {locating
+                ? 'Por favor aguardá unos segundos'
+                : orgWorkplace?.requirePhotoOnClock !== false
+                ? 'Toca para validar identidad (foto) y ubicación GPS'
+                : 'Toca para verificar ubicación y marcar'}
             </span>
           </button>
         </div>
@@ -487,6 +587,92 @@ export default function FuncionarioMobilePage() {
           </button>
         </div>
       </div>
+
+      {/* Modal de Cámara en Vivo (Verificación Fotográfica) */}
+      {isCameraModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Camera className="w-5 h-5 text-petroleum-800" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Verificación de Identidad ({isWorking ? 'Salida' : 'Entrada'})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  stopCameraStream();
+                  setIsCameraModalOpen(false);
+                }}
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              Ubicá tu rostro dentro del recuadro para capturar la foto en vivo junto con tu ubicación GPS.
+            </p>
+
+            {cameraError ? (
+              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-3">
+                <p>{cameraError}</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={openCameraModal}
+                    className="px-3 py-1.5 rounded-xl bg-white border border-rose-300 font-semibold text-rose-800"
+                  >
+                    Reintentar cámara
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopCameraStream();
+                      setIsCameraModalOpen(false);
+                      setReviewDescription(cameraError);
+                      setIsReviewModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 text-white font-semibold"
+                  >
+                    Solicitar Revisión
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative w-full aspect-square bg-slate-900 rounded-2xl overflow-hidden flex items-center justify-center">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                  {!cameraReady && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-white/80 text-xs gap-2">
+                      <RefreshCw className="w-6 h-6 animate-spin" />
+                      <span>Iniciando cámara frontal...</span>
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-6 rounded-full border-2 border-dashed border-cyan-300/60" />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={!cameraReady}
+                  onClick={capturePhotoAndClock}
+                  className="w-full py-3.5 px-4 rounded-2xl text-sm font-bold text-white bg-petroleum-800 hover:bg-petroleum-900 shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Camera className="w-4 h-4 text-cyan-300" />
+                  Capturar Foto y {nextActionLabel}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Modal de Solicitud de Revisión */}
       {isReviewModalOpen && (

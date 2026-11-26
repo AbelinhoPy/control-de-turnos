@@ -55,6 +55,7 @@ export class DatabaseService {
       geofenceRadiusMeters: org.geofenceRadiusMeters,
       halfDayRuleConfirmed: org.halfDayRuleConfirmed,
       hourlyRateRuleConfirmed: org.hourlyRateRuleConfirmed,
+      requirePhotoOnClock: org.requirePhotoOnClock ?? true,
       createdAt: org.createdAt.toISOString(),
       updatedAt: org.updatedAt.toISOString(),
     };
@@ -97,6 +98,7 @@ export class DatabaseService {
       geofenceRadiusMeters: orgData.geofenceRadiusMeters ?? 300,
       halfDayRuleConfirmed: orgData.halfDayRuleConfirmed ?? false,
       hourlyRateRuleConfirmed: orgData.hourlyRateRuleConfirmed ?? false,
+      requirePhotoOnClock: orgData.requirePhotoOnClock ?? true,
       createdAt: now,
       updatedAt: now,
     });
@@ -137,6 +139,7 @@ export class DatabaseService {
     if (data.nightSurchargePercent !== undefined) updateFields.nightSurchargePercent = data.nightSurchargePercent;
     if (data.halfDayRuleConfirmed !== undefined) updateFields.halfDayRuleConfirmed = data.halfDayRuleConfirmed;
     if (data.hourlyRateRuleConfirmed !== undefined) updateFields.hourlyRateRuleConfirmed = data.hourlyRateRuleConfirmed;
+    if (data.requirePhotoOnClock !== undefined) updateFields.requirePhotoOnClock = data.requirePhotoOnClock;
 
     await db.update(schema.organizations).set(updateFields).where(eq(schema.organizations.id, orgId));
     return this.getOrganization(orgId);
@@ -576,12 +579,14 @@ export class DatabaseService {
       clockInAccuracy: att.clockInAccuracy,
       clockInDistanceMeters: att.clockInDistanceMeters,
       clockInStatus: att.clockInStatus as any,
+      clockInPhoto: att.clockInPhoto ?? null,
       clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
       clockOutLat: att.clockOutLat,
       clockOutLng: att.clockOutLng,
       clockOutAccuracy: att.clockOutAccuracy,
       clockOutDistanceMeters: att.clockOutDistanceMeters,
       clockOutStatus: att.clockOutStatus as any,
+      clockOutPhoto: att.clockOutPhoto ?? null,
       workedDays: Number(att.workedDays),
       dayHours: Number(att.dayHours),
       nightHours: Number(att.nightHours),
@@ -633,12 +638,14 @@ export class DatabaseService {
       clockInAccuracy: att.clockInAccuracy,
       clockInDistanceMeters: att.clockInDistanceMeters,
       clockInStatus: att.clockInStatus as any,
+      clockInPhoto: att.clockInPhoto ?? null,
       clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
       clockOutLat: att.clockOutLat,
       clockOutLng: att.clockOutLng,
       clockOutAccuracy: att.clockOutAccuracy,
       clockOutDistanceMeters: att.clockOutDistanceMeters,
       clockOutStatus: att.clockOutStatus as any,
+      clockOutPhoto: att.clockOutPhoto ?? null,
       workedDays: Number(att.workedDays),
       dayHours: Number(att.dayHours),
       nightHours: Number(att.nightHours),
@@ -677,12 +684,14 @@ export class DatabaseService {
       clockInAccuracy: att.clockInAccuracy,
       clockInDistanceMeters: att.clockInDistanceMeters,
       clockInStatus: att.clockInStatus as any,
+      clockInPhoto: att.clockInPhoto ?? null,
       clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
       clockOutLat: att.clockOutLat,
       clockOutLng: att.clockOutLng,
       clockOutAccuracy: att.clockOutAccuracy,
       clockOutDistanceMeters: att.clockOutDistanceMeters,
       clockOutStatus: att.clockOutStatus as any,
+      clockOutPhoto: att.clockOutPhoto ?? null,
       workedDays: Number(att.workedDays),
       dayHours: Number(att.dayHours),
       nightHours: Number(att.nightHours),
@@ -720,12 +729,14 @@ export class DatabaseService {
       clockInAccuracy: att.clockInAccuracy,
       clockInDistanceMeters: att.clockInDistanceMeters,
       clockInStatus: att.clockInStatus as any,
+      clockInPhoto: att.clockInPhoto ?? null,
       clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
       clockOutLat: att.clockOutLat,
       clockOutLng: att.clockOutLng,
       clockOutAccuracy: att.clockOutAccuracy,
       clockOutDistanceMeters: att.clockOutDistanceMeters,
       clockOutStatus: att.clockOutStatus as any,
+      clockOutPhoto: att.clockOutPhoto ?? null,
       workedDays: Number(att.workedDays),
       dayHours: Number(att.dayHours),
       nightHours: Number(att.nightHours),
@@ -749,6 +760,7 @@ export class DatabaseService {
     accuracy: number;
     distanceMeters: number;
     status: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
+    photo?: string | null;
     idempotencyToken?: string;
   }): Promise<AttendanceData> {
     assertDatabaseAvailable();
@@ -788,6 +800,7 @@ export class DatabaseService {
       clockInAccuracy: params.accuracy,
       clockInDistanceMeters: params.distanceMeters,
       clockInStatus: params.status,
+      clockInPhoto: params.photo ?? null,
       status: 'EN_CURSO',
       workedDays: '0',
       dayHours: '0',
@@ -826,6 +839,7 @@ export class DatabaseService {
     accuracy: number;
     distanceMeters: number;
     status: 'VALID' | 'MANUAL' | 'GEOFENCE_WARNING';
+    photo?: string | null;
     idempotencyToken?: string;
   }): Promise<AttendanceData> {
     assertDatabaseAvailable();
@@ -861,6 +875,7 @@ export class DatabaseService {
         clockOutAccuracy: params.accuracy,
         clockOutDistanceMeters: params.distanceMeters,
         clockOutStatus: params.status,
+        ...(params.photo ? { clockOutPhoto: params.photo } : {}),
         workedDays: calc.workedDays.toString(),
         dayHours: calc.dayHours.toString(),
         nightHours: calc.nightHours.toString(),
@@ -1054,12 +1069,14 @@ export class DatabaseService {
       clockInAccuracy: att.clockInAccuracy,
       clockInDistanceMeters: att.clockInDistanceMeters,
       clockInStatus: att.clockInStatus as any,
+      clockInPhoto: att.clockInPhoto ?? null,
       clockOutTime: att.clockOutTime ? att.clockOutTime.toISOString() : null,
       clockOutLat: att.clockOutLat,
       clockOutLng: att.clockOutLng,
       clockOutAccuracy: att.clockOutAccuracy,
       clockOutDistanceMeters: att.clockOutDistanceMeters,
       clockOutStatus: att.clockOutStatus as any,
+      clockOutPhoto: att.clockOutPhoto ?? null,
       workedDays: Number(att.workedDays),
       dayHours: Number(att.dayHours),
       nightHours: Number(att.nightHours),

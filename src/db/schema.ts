@@ -16,6 +16,7 @@ export const organizations = pgTable('organizations', {
   geofenceRadiusMeters: integer('geofence_radius_meters').notNull().default(300),
   halfDayRuleConfirmed: boolean('half_day_rule_confirmed').notNull().default(false),
   hourlyRateRuleConfirmed: boolean('hourly_rate_rule_confirmed').notNull().default(false),
+  requirePhotoOnClock: boolean('require_photo_on_clock').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -99,6 +100,7 @@ export const attendances = pgTable('attendances', {
   clockInAccuracy: doublePrecision('clock_in_accuracy'),
   clockInDistanceMeters: doublePrecision('clock_in_distance_meters'),
   clockInStatus: text('clock_in_status').default('VALID'), // 'VALID', 'MANUAL', 'GEOFENCE_WARNING'
+  clockInPhoto: text('clock_in_photo'),
   
   // Salida
   clockOutTime: timestamp('clock_out_time', { withTimezone: true }),
@@ -107,6 +109,7 @@ export const attendances = pgTable('attendances', {
   clockOutAccuracy: doublePrecision('clock_out_accuracy'),
   clockOutDistanceMeters: doublePrecision('clock_out_distance_meters'),
   clockOutStatus: text('clock_out_status'), // 'VALID', 'MANUAL', 'GEOFENCE_WARNING'
+  clockOutPhoto: text('clock_out_photo'),
   
   // Cálculos de jornada
   workedDays: numeric('worked_days').notNull().default('0'), // 1.0, 0.5, 0

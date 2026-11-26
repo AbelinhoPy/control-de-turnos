@@ -15,6 +15,8 @@ import {
   MapPin,
   Calendar,
   Sparkles,
+  Camera,
+  X,
 } from 'lucide-react';
 import { formatTimeAsuncion, getDayNameEs, getCurrentDateAsuncion } from '@/lib/time/timezone';
 
@@ -28,9 +30,11 @@ interface EnrichedAttendance {
   clockInTime?: string | null;
   clockInStatus?: string;
   clockInDistanceMeters?: number | null;
+  clockInPhoto?: string | null;
   clockOutTime?: string | null;
   clockOutStatus?: string;
   clockOutDistanceMeters?: number | null;
+  clockOutPhoto?: string | null;
   workedDays: number;
   dayHours: number;
   nightHours: number;
@@ -62,6 +66,13 @@ export default function AttendanceControlPage() {
 
   // Modal corrección manual
   const [isCorrectModalOpen, setIsCorrectModalOpen] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState<{
+    userName: string;
+    label: string;
+    time: string;
+    distance?: number | null;
+    photo: string;
+  } | null>(null);
   const [targetAtt, setTargetAtt] = useState<EnrichedAttendance | null>(null);
   const [formClockIn, setFormClockIn] = useState('');
   const [formClockOut, setFormClockOut] = useState('');
@@ -351,10 +362,50 @@ export default function AttendanceControlPage() {
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-center font-mono">
-                        {att.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--'}
+                        <div className="inline-flex items-center gap-1.5">
+                          <span>{att.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--'}</span>
+                          {att.clockInPhoto && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPhotoPreview({
+                                  userName: att.userName,
+                                  label: 'Foto de Entrada',
+                                  time: att.clockInTime ? formatTimeAsuncion(att.clockInTime) : '--:--',
+                                  distance: att.clockInDistanceMeters,
+                                  photo: att.clockInPhoto!,
+                                })
+                              }
+                              title="Ver foto de entrada"
+                              className="p-1 rounded-md bg-petroleum-50 text-petroleum-700 hover:bg-petroleum-100 border border-petroleum-200 transition"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 text-center font-mono">
-                        {att.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--'}
+                        <div className="inline-flex items-center gap-1.5">
+                          <span>{att.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--'}</span>
+                          {att.clockOutPhoto && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPhotoPreview({
+                                  userName: att.userName,
+                                  label: 'Foto de Salida',
+                                  time: att.clockOutTime ? formatTimeAsuncion(att.clockOutTime) : '--:--',
+                                  distance: att.clockOutDistanceMeters,
+                                  photo: att.clockOutPhoto!,
+                                })
+                              }
+                              title="Ver foto de salida"
+                              className="p-1 rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 transition"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 text-center font-semibold text-slate-800">
                         {Number(att.workedDays).toFixed(1)}
@@ -392,6 +443,54 @@ export default function AttendanceControlPage() {
           </table>
         </div>
       </div>
+
+      {/* Modal Vista Previa de Evidencia Fotográfica */}
+      {photoPreview && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setPhotoPreview(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-100 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-petroleum-700 block">
+                  {photoPreview.label}
+                </span>
+                <h3 className="text-sm font-bold text-slate-900">{photoPreview.userName}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoPreview(null)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
+              <img
+                src={photoPreview.photo}
+                alt={`${photoPreview.label} - ${photoPreview.userName}`}
+                className="w-full h-auto object-cover"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-slate-600 bg-slate-50 px-3 py-2 rounded-xl">
+              <span>
+                Hora: <strong className="text-slate-900 font-mono">{photoPreview.time}</strong>
+              </span>
+              {typeof photoPreview.distance === 'number' && (
+                <span>
+                  Distancia sede: <strong className="text-emerald-700">{Math.round(photoPreview.distance)} m</strong>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Corrección */}
       {isCorrectModalOpen && targetAtt && (
